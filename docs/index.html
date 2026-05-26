@@ -4,176 +4,40 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>YapHub | Temporary Voice Channels for Discord</title>
-    <meta
-      name="description"
-      content="YapHub is a lightweight Discord bot for temporary voice channels, cleaner community voice management, and VoiceMaster-style join-to-create rooms."
-    />
+    <meta name="description" content="YapHub is a lightweight Discord bot for temporary voice channels, cleaner community voice management, and VoiceMaster-style join-to-create rooms." />
     <style>
-      :root {
-        --bg: #0b1020;
-        --panel: rgba(255, 255, 255, 0.075);
-        --panel-strong: rgba(255, 255, 255, 0.12);
-        --text: #f6f8ff;
-        --muted: #b9c1d9;
-        --accent: #8b7cff;
-        --accent-2: #35d0ff;
-        --good: #5ff0a8;
-        --border: rgba(255, 255, 255, 0.15);
-        --shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
-      }
-      * { box-sizing: border-box; }
-      body {
-        margin: 0;
-        min-height: 100vh;
-        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        color: var(--text);
-        background:
-          radial-gradient(circle at top left, rgba(139, 124, 255, 0.35), transparent 34rem),
-          radial-gradient(circle at top right, rgba(53, 208, 255, 0.22), transparent 30rem),
-          linear-gradient(135deg, #070a14 0%, var(--bg) 50%, #101735 100%);
-        line-height: 1.6;
-      }
-      a { color: inherit; }
-      .wrap { width: min(1120px, calc(100% - 32px)); margin: 0 auto; padding: 32px 0 56px; }
-      header { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 64px; }
-      .brand { display: flex; align-items: center; gap: 12px; font-weight: 800; letter-spacing: -0.03em; }
-      .logo { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 14px; background: linear-gradient(135deg, var(--accent), var(--accent-2)); box-shadow: 0 10px 35px rgba(139, 124, 255, 0.45); }
-      .nav { display: flex; gap: 12px; flex-wrap: wrap; justify-content: flex-end; }
-      .nav a { text-decoration: none; color: var(--muted); border: 1px solid var(--border); padding: 10px 14px; border-radius: 999px; background: rgba(255, 255, 255, 0.04); }
-      .hero { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 28px; align-items: center; }
-      .eyebrow { display: inline-flex; align-items: center; gap: 8px; margin-bottom: 18px; color: var(--good); font-size: 0.92rem; font-weight: 700; letter-spacing: 0.02em; }
-      h1 { margin: 0; font-size: clamp(3rem, 8vw, 6.25rem); line-height: 0.92; letter-spacing: -0.08em; }
-      .lead { max-width: 690px; margin: 24px 0 0; color: var(--muted); font-size: clamp(1.1rem, 2vw, 1.35rem); }
-      .actions { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 32px; }
-      .button { display: inline-flex; align-items: center; justify-content: center; gap: 10px; min-height: 52px; padding: 0 22px; border-radius: 16px; border: 1px solid transparent; font-weight: 800; text-decoration: none; box-shadow: var(--shadow); }
-      .primary { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #050713; }
-      .secondary { background: var(--panel); border-color: var(--border); color: var(--text); }
-      .card { border: 1px solid var(--border); background: var(--panel); border-radius: 28px; padding: 24px; box-shadow: var(--shadow); backdrop-filter: blur(18px); }
-      .mock { min-height: 390px; }
-      .server-title { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
-      .pill { display: inline-flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 999px; background: rgba(95, 240, 168, 0.12); color: var(--good); font-size: 0.82rem; font-weight: 800; }
-      .channel-list { display: grid; gap: 12px; }
-      .channel { padding: 14px; border-radius: 18px; background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.08); }
-      .channel small { display: block; color: var(--muted); margin-top: 3px; }
-      .created { border-color: rgba(95, 240, 168, 0.35); background: rgba(95, 240, 168, 0.09); }
-      .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 48px; }
-      h2 { margin: 0 0 12px; font-size: clamp(1.8rem, 3vw, 2.5rem); letter-spacing: -0.05em; }
-      h3 { margin: 0 0 8px; font-size: 1.05rem; }
-      p { margin: 0; }
-      .muted { color: var(--muted); }
-      .section { margin-top: 70px; }
-      .two-col { display: grid; grid-template-columns: 0.95fr 1.05fr; gap: 18px; align-items: start; }
-      .steps { counter-reset: step; display: grid; gap: 12px; }
-      .step { counter-increment: step; display: grid; grid-template-columns: 44px 1fr; gap: 14px; align-items: start; }
-      .step::before { content: counter(step); width: 38px; height: 38px; display: grid; place-items: center; border-radius: 12px; background: var(--panel-strong); color: var(--accent-2); font-weight: 900; }
-      .code { overflow-wrap: anywhere; padding: 14px; border-radius: 16px; background: rgba(0, 0, 0, 0.28); border: 1px solid rgba(255, 255, 255, 0.1); color: #dce5ff; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.9rem; }
-      .permissions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
-      .permission { padding: 8px 11px; border-radius: 999px; background: rgba(255, 255, 255, 0.07); border: 1px solid rgba(255, 255, 255, 0.1); color: var(--muted); font-size: 0.9rem; }
-      footer { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-top: 70px; padding-top: 24px; color: var(--muted); border-top: 1px solid var(--border); }
-      @media (max-width: 820px) {
-        header, .hero, .two-col, .grid { grid-template-columns: 1fr; }
-        header { align-items: flex-start; flex-direction: column; margin-bottom: 42px; }
-        .nav { justify-content: flex-start; }
-        .mock { min-height: auto; }
-      }
+      :root{--bg:#0b1020;--panel:rgba(255,255,255,.075);--panel-strong:rgba(255,255,255,.12);--text:#f6f8ff;--muted:#b9c1d9;--accent:#8b7cff;--accent-2:#35d0ff;--good:#5ff0a8;--border:rgba(255,255,255,.15);--shadow:0 24px 80px rgba(0,0,0,.35)}*{box-sizing:border-box}body{margin:0;min-height:100vh;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--text);background:radial-gradient(circle at top left,rgba(139,124,255,.35),transparent 34rem),radial-gradient(circle at top right,rgba(53,208,255,.22),transparent 30rem),linear-gradient(135deg,#070a14 0%,var(--bg) 50%,#101735 100%);line-height:1.6}a{color:inherit}.wrap{width:min(1120px,calc(100% - 32px));margin:0 auto;padding:32px 0 56px}header{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:42px}.brand{display:flex;align-items:center;gap:12px;font-weight:900;letter-spacing:-.03em}.logo{width:46px;height:46px;border-radius:50%;object-fit:cover;box-shadow:0 0 24px rgba(53,208,255,.45),0 0 36px rgba(139,124,255,.28)}.nav{display:flex;gap:12px;flex-wrap:wrap;justify-content:flex-end}.nav a{text-decoration:none;color:var(--muted);border:1px solid var(--border);padding:10px 14px;border-radius:999px;background:rgba(255,255,255,.04)}.hero{display:grid;grid-template-columns:1.02fr .98fr;gap:28px;align-items:center}.eyebrow{display:inline-flex;align-items:center;gap:8px;margin-bottom:18px;color:var(--good);font-size:.92rem;font-weight:800;letter-spacing:.02em}h1{margin:0;font-size:clamp(3rem,7vw,5.75rem);line-height:.94;letter-spacing:-.08em}.lead{max-width:690px;margin:24px 0 0;color:var(--muted);font-size:clamp(1.08rem,2vw,1.32rem)}.actions{display:flex;gap:14px;flex-wrap:wrap;margin-top:32px}.button{display:inline-flex;align-items:center;justify-content:center;gap:10px;min-height:52px;padding:0 22px;border-radius:16px;border:1px solid transparent;font-weight:900;text-decoration:none;box-shadow:var(--shadow);transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease}.button:hover{transform:translateY(-2px);box-shadow:0 0 32px rgba(53,208,255,.24),0 24px 80px rgba(0,0,0,.4)}.primary{background:linear-gradient(135deg,var(--accent),var(--accent-2));color:#050713}.secondary{background:var(--panel);border-color:var(--border);color:var(--text)}.card{border:1px solid var(--border);background:var(--panel);border-radius:28px;padding:24px;box-shadow:var(--shadow);backdrop-filter:blur(18px)}.brand-card{padding:14px;background:linear-gradient(135deg,rgba(53,208,255,.12),rgba(139,124,255,.12));overflow:hidden}.banner{width:100%;display:block;border-radius:20px;border:1px solid rgba(255,255,255,.12);box-shadow:0 0 46px rgba(53,208,255,.14)}.mock{margin-top:14px}.server-title{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}.pill{display:inline-flex;align-items:center;gap:8px;padding:7px 10px;border-radius:999px;background:rgba(95,240,168,.12);color:var(--good);font-size:.82rem;font-weight:900}.channel-list{display:grid;gap:10px}.channel{padding:12px 14px;border-radius:16px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08)}.channel small{display:block;color:var(--muted);margin-top:3px}.created{border-color:rgba(95,240,168,.35);background:rgba(95,240,168,.09)}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:48px}h2{margin:0 0 12px;font-size:clamp(1.8rem,3vw,2.5rem);letter-spacing:-.05em}h3{margin:0 0 8px;font-size:1.05rem}p{margin:0}.muted{color:var(--muted)}.section{margin-top:70px}.two-col{display:grid;grid-template-columns:.95fr 1.05fr;gap:18px;align-items:start}.steps{counter-reset:step;display:grid;gap:12px}.step{counter-increment:step;display:grid;grid-template-columns:44px 1fr;gap:14px;align-items:start}.step::before{content:counter(step);width:38px;height:38px;display:grid;place-items:center;border-radius:12px;background:var(--panel-strong);color:var(--accent-2);font-weight:900}.code{overflow-wrap:anywhere;padding:14px;border-radius:16px;background:rgba(0,0,0,.28);border:1px solid rgba(255,255,255,.1);color:#dce5ff;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.9rem}.permissions{display:flex;flex-wrap:wrap;gap:10px;margin-top:16px}.permission{padding:8px 11px;border-radius:999px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);color:var(--muted);font-size:.9rem}footer{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-top:70px;padding-top:24px;color:var(--muted);border-top:1px solid var(--border)}@media(max-width:820px){header,.hero,.two-col,.grid{grid-template-columns:1fr}header{align-items:flex-start;flex-direction:column;margin-bottom:42px}.nav{justify-content:flex-start}}
     </style>
   </head>
   <body>
     <div class="wrap">
       <header>
-        <div class="brand">
-          <div class="logo" aria-hidden="true">🎙️</div>
-          <span>YapHub</span>
-        </div>
-        <nav class="nav" aria-label="YapHub links">
-          <a href="#setup">Setup</a>
-          <a href="#permissions">Permissions</a>
-        </nav>
+        <div class="brand"><img class="logo" src="./assets/yaphub-pfp.png" alt="YapHub logo" /><span>YapHub</span></div>
+        <nav class="nav" aria-label="YapHub links"><a href="#setup">Setup</a><a href="#permissions">Permissions</a></nav>
       </header>
-
       <main>
         <section class="hero">
           <div>
             <div class="eyebrow">Discord temp voice channels, minus the clutter</div>
             <h1>Let your server yap without making a mess.</h1>
-            <p class="lead">
-              YapHub creates temporary voice rooms when members join a configured lobby, then cleans those rooms up when they are empty. Built for gaming servers, friend groups, leagues, and communities that want cleaner voice management.
-            </p>
-            <div class="actions">
-              <a class="button primary" href="https://discord.com/oauth2/authorize?client_id=1503456577666154506&permissions=277311728656&integration_type=0&scope=applications.commands+bot">Add YapHub to Discord</a>
-              <a class="button secondary" href="#setup">See setup steps</a>
-            </div>
+            <p class="lead">YapHub creates temporary voice rooms when members join a configured lobby, then cleans those rooms up when they are empty. Built for gaming servers, friend groups, leagues, and communities that want cleaner voice management.</p>
+            <div class="actions"><a class="button primary" href="https://discord.com/oauth2/authorize?client_id=1503456577666154506&permissions=277311728656&integration_type=0&scope=applications.commands+bot">Add YapHub to Discord</a><a class="button secondary" href="#setup">See setup steps</a></div>
           </div>
-
-          <aside class="card mock" aria-label="Example Discord voice layout">
-            <div class="server-title">
-              <strong>Example Server</strong>
-              <span class="pill">Live cleanup</span>
-            </div>
-            <div class="channel-list">
-              <div class="channel">🔊 Join to Yap<small>Members join here to create a temporary room.</small></div>
-              <div class="channel created">🔊 Diese's Yap<small>Created automatically, owner limited to one active room per server.</small></div>
-              <div class="channel">🔊 Lower Div Join to Yap<small>Optional category-specific lobby.</small></div>
-              <div class="channel created">🔊 Ranked Review<small>Deleted automatically after the last member leaves.</small></div>
+          <aside class="card brand-card" aria-label="YapHub branding and example Discord voice layout">
+            <img class="banner" src="./assets/yaphub-banner.png" alt="YapHub banner" />
+            <div class="card mock">
+              <div class="server-title"><strong>Example Server</strong><span class="pill">Live cleanup</span></div>
+              <div class="channel-list"><div class="channel">🔊 Join to Yap<small>Members join here to create a temporary room.</small></div><div class="channel created">🔊 Diese's Yap<small>Created automatically, owner limited to one active room per server.</small></div><div class="channel">🔊 Lower Div Join to Yap<small>Optional category-specific lobby.</small></div><div class="channel created">🔊 Ranked Review<small>Deleted automatically after the last member leaves.</small></div></div>
             </div>
           </aside>
         </section>
-
-        <section class="grid" aria-label="YapHub highlights">
-          <article class="card"><h3>Join-to-create flow</h3><p class="muted">Members join a lobby channel and YapHub creates a temporary voice room in the right category.</p></article>
-          <article class="card"><h3>Multi-server ready</h3><p class="muted">Invite YapHub to multiple Discord servers and configure each one independently.</p></article>
-          <article class="card"><h3>Automatic cleanup</h3><p class="muted">Temporary rooms are removed after they empty, keeping your server clean without manual moderation chores.</p></article>
-        </section>
-
-        <section id="setup" class="section two-col">
-          <div>
-            <h2>How setup works</h2>
-            <p class="muted">Invite YapHub, approve the requested permissions, then run one setup command in your Discord server. No cloning, no self-hosting, no code required.</p>
-          </div>
-          <div class="card steps">
-            <div class="step"><div><h3>Add YapHub to your server</h3><p class="muted">Use the Add to Discord button and approve the requested permissions.</p></div></div>
-            <div class="step"><div><h3>Run setup in Discord</h3><p class="muted">Use <strong>/yap setup</strong> and select the category where temporary voice rooms should be created.</p></div></div>
-            <div class="step"><div><h3>Members join the lobby</h3><p class="muted">When someone joins the configured lobby, YapHub creates their temporary room and moves them into it.</p></div></div>
-            <div class="step"><div><h3>Empty rooms clean themselves up</h3><p class="muted">When the last member leaves a YapHub-created room, the bot removes it.</p></div></div>
-          </div>
-        </section>
-
-        <section class="section two-col">
-          <div class="card">
-            <h2>Hosted bot, simple install</h2>
-            <p class="muted">YapHub is offered as an installable Discord bot. Server owners only need to invite it and configure their voice lobby. The bot service is managed separately so your community does not need to run its own copy.</p>
-          </div>
-          <div class="card">
-            <h2>Common commands</h2>
-            <div class="code">/yap setup category:#GENERAL VOICE</div><br />
-            <div class="code">/yap config</div><br />
-            <div class="code">/yap profile create name:"Lower Div Yaps" category:#SMITE-LOWER-DIV lobby_name:"Lower Div Join to Yap"</div>
-          </div>
-        </section>
-
-        <section id="permissions" class="section two-col">
-          <div>
-            <h2>Requested permissions</h2>
-            <p class="muted">YapHub asks for voice and channel-management permissions so it can create temporary rooms, move members into them, and clean them up later. It should not need full Administrator access.</p>
-          </div>
-          <div class="card">
-            <div class="permissions">
-              <span class="permission">Manage Channels</span><span class="permission">Move Members</span><span class="permission">View Channels</span><span class="permission">Connect</span><span class="permission">Speak</span><span class="permission">Send Messages</span><span class="permission">Read Message History</span><span class="permission">Slash Commands</span>
-            </div>
-          </div>
-        </section>
-
-        <section class="section card">
-          <h2>Built narrow on purpose</h2>
-          <p class="muted">YapHub is not trying to be a mega-bot. It focuses on temporary voice channels, category-scoped join lobbies, and keeping Discord servers from turning into permanent voice-channel soup.</p>
-          <div class="actions"><a class="button primary" href="https://discord.com/oauth2/authorize?client_id=1503456577666154506&permissions=277311728656&integration_type=0&scope=applications.commands+bot">Add YapHub to Discord</a></div>
-        </section>
+        <section class="grid" aria-label="YapHub highlights"><article class="card"><h3>Join-to-create flow</h3><p class="muted">Members join a lobby channel and YapHub creates a temporary voice room in the right category.</p></article><article class="card"><h3>Multi-server ready</h3><p class="muted">Invite YapHub to multiple Discord servers and configure each one independently.</p></article><article class="card"><h3>Automatic cleanup</h3><p class="muted">Temporary rooms are removed after they empty, keeping your server clean without manual moderation chores.</p></article></section>
+        <section id="setup" class="section two-col"><div><h2>How setup works</h2><p class="muted">Invite YapHub, approve the requested permissions, then run one setup command in your Discord server. No cloning, no self-hosting, no code required.</p></div><div class="card steps"><div class="step"><div><h3>Add YapHub to your server</h3><p class="muted">Use the Add to Discord button and approve the requested permissions.</p></div></div><div class="step"><div><h3>Run setup in Discord</h3><p class="muted">Use <strong>/yap setup</strong> and select the category where temporary voice rooms should be created.</p></div></div><div class="step"><div><h3>Members join the lobby</h3><p class="muted">When someone joins the configured lobby, YapHub creates their temporary room and moves them into it.</p></div></div><div class="step"><div><h3>Empty rooms clean themselves up</h3><p class="muted">When the last member leaves a YapHub-created room, the bot removes it.</p></div></div></div></section>
+        <section class="section two-col"><div class="card"><h2>Hosted bot, simple install</h2><p class="muted">YapHub is offered as an installable Discord bot. Server owners only need to invite it and configure their voice lobby. The bot service is managed separately so your community does not need to run its own copy.</p></div><div class="card"><h2>Common commands</h2><div class="code">/yap setup category:#GENERAL VOICE</div><br /><div class="code">/yap config</div><br /><div class="code">/yap profile create name:"Lower Div Yaps" category:#SMITE-LOWER-DIV lobby_name:"Lower Div Join to Yap"</div></div></section>
+        <section id="permissions" class="section two-col"><div><h2>Requested permissions</h2><p class="muted">YapHub asks for voice and channel-management permissions so it can create temporary rooms, move members into them, and clean them up later. It should not need full Administrator access.</p></div><div class="card"><div class="permissions"><span class="permission">Manage Channels</span><span class="permission">Move Members</span><span class="permission">View Channels</span><span class="permission">Connect</span><span class="permission">Speak</span><span class="permission">Send Messages</span><span class="permission">Read Message History</span><span class="permission">Slash Commands</span></div></div></section>
+        <section class="section card"><h2>Built narrow on purpose</h2><p class="muted">YapHub is not trying to be a mega-bot. It focuses on temporary voice channels, category-scoped join lobbies, and keeping Discord servers from turning into permanent voice-channel soup.</p><div class="actions"><a class="button primary" href="https://discord.com/oauth2/authorize?client_id=1503456577666154506&permissions=277311728656&integration_type=0&scope=applications.commands+bot">Add YapHub to Discord</a></div></section>
       </main>
-
-      <footer>
-        <span>YapHub by Diese Tech</span>
-        <span>Temporary voice channels for cleaner Discord communities.</span>
-      </footer>
+      <footer><span>YapHub by Diese Tech</span><span>Temporary voice channels for cleaner Discord communities.</span></footer>
     </div>
   </body>
 </html>
