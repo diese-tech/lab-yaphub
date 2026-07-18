@@ -8,11 +8,13 @@ from commands.owner_controls import (
     hide_owned_temp_channel,
     limit_temp_channel,
     lock_owned_temp_channel,
+    permit_member,
     rename_temp_channel,
     show_room_info,
     transfer_temp_channel,
     unhide_owned_temp_channel,
     unlock_owned_temp_channel,
+    unpermit_member,
 )
 from commands.profiles import ProfileGroup
 from config import JOIN_TO_CREATE_NAME
@@ -119,6 +121,8 @@ class YapGroup(app_commands.Group):
                 "`/yap transfer user:<member>` - Transfer ownership to someone in the room.\n"
                 "`/yap lock` / `/yap unlock` - Control new joins.\n"
                 "`/yap hide` / `/yap unhide` - Control who can see the room.\n"
+                "`/yap permit user:<member>` / `/yap unpermit user:<member>` - Manage standing access "
+                "that survives hide/lock and leaving.\n"
                 "`/yap room` - Show info about the room you are in.\n\n"
                 "`/yap profile create` is available for advanced/manual setups."
             ),
@@ -272,3 +276,16 @@ class YapGroup(app_commands.Group):
     @app_commands.checks.cooldown(1, 5.0)
     async def room(self, interaction: discord.Interaction) -> None:
         await show_room_info(self.bot, interaction)
+
+    @app_commands.command(
+        name="permit",
+        description="Give a member standing access to your room, even while hidden or locked",
+    )
+    @app_commands.checks.cooldown(1, 5.0)
+    async def permit(self, interaction: discord.Interaction, user: discord.Member) -> None:
+        await permit_member(self.bot, interaction, user)
+
+    @app_commands.command(name="unpermit", description="Remove a member's standing access to your room")
+    @app_commands.checks.cooldown(1, 5.0)
+    async def unpermit(self, interaction: discord.Interaction, user: discord.Member) -> None:
+        await unpermit_member(self.bot, interaction, user)

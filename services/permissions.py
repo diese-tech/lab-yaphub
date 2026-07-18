@@ -30,6 +30,7 @@ async def _restrict_default_allow_members(
     attr: str,
     reason: str,
     owner: discord.Member | None = None,
+    extra_allowed: tuple[discord.Member, ...] = (),
 ) -> None:
     default_role = channel.guild.default_role
     default_overwrite = channel.overwrites_for(default_role)
@@ -49,8 +50,11 @@ async def _restrict_default_allow_members(
             await channel.set_permissions(target, overwrite=overwrite, reason=reason)
 
     allowed_members = list(channel.members)
-    if owner is not None and all(member.id != owner.id for member in allowed_members):
-        allowed_members.append(owner)
+    seen_ids = {member.id for member in allowed_members}
+    for extra in (owner, *extra_allowed):
+        if extra is not None and extra.id not in seen_ids:
+            allowed_members.append(extra)
+            seen_ids.add(extra.id)
 
     for member in allowed_members:
         member_overwrite = channel.overwrites_for(member)
@@ -117,8 +121,11 @@ async def lock_temp_channel(
     channel: discord.VoiceChannel,
     reason: str,
     owner: discord.Member | None = None,
+    extra_allowed: tuple[discord.Member, ...] = (),
 ) -> None:
-    await _restrict_default_allow_members(channel, "connect", reason, owner=owner)
+    await _restrict_default_allow_members(
+        channel, "connect", reason, owner=owner, extra_allowed=extra_allowed
+    )
 
 
 async def unlock_temp_channel(channel: discord.VoiceChannel, reason: str) -> None:
@@ -129,8 +136,24 @@ async def hide_temp_channel(
     channel: discord.VoiceChannel,
     reason: str,
     owner: discord.Member | None = None,
+    extra_allowed: tuple[discord.Member, ...] = (),
 ) -> None:
-    await _restrict_default_allow_members(channel, "view_channel", reason, owner=owner)
+    await _restrict_default_allow_members(
+        channel, "view_channel", reason, owner=owner, extra_allowed=extra_allowed
+    )
+
+
+async def grant_member_access(
+    channel: discord.VoiceChannel,
+    member: discord.Member,
+    reason: str,
+) -> None:
+    """Give a member standing view/connect allows (a permit) so restrictions
+    and departure-revocation don't apply to them."""
+    overwrite = channel.overwrites_for(member)
+    overwrite.view_channel = True
+    overwrite.connect = True
+    await channel.set_permissions(member, overwrite=overwrite, reason=reason)
 
 
 async def unhide_temp_channel(channel: discord.VoiceChannel, reason: str) -> None:

@@ -39,3 +39,10 @@ create unique index if not exists idx_active_temp_channels_owner
 
 create index if not exists idx_active_temp_channels_guild
   on active_temp_channels (guild_id);
+
+create table if not exists temp_channel_permits (
+  channel_id text not null,
+  user_id text not null,
+  created_at text not null,
+  primary key (channel_id, user_id)
+);

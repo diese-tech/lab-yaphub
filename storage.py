@@ -369,6 +369,47 @@ class Storage:
                 "delete from active_temp_channels where channel_id = ?",
                 (str(channel_id),),
             )
+            connection.execute(
+                "delete from temp_channel_permits where channel_id = ?",
+                (str(channel_id),),
+            )
+
+    async def add_permit(self, channel_id: int, user_id: int) -> None:
+        await asyncio.to_thread(self._add_permit, channel_id, user_id)
+
+    def _add_permit(self, channel_id: int, user_id: int) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                insert or ignore into temp_channel_permits (channel_id, user_id, created_at)
+                values (?, ?, ?)
+                """,
+                (str(channel_id), str(user_id), utc_now_iso()),
+            )
+
+    async def remove_permit(self, channel_id: int, user_id: int) -> None:
+        await asyncio.to_thread(self._remove_permit, channel_id, user_id)
+
+    def _remove_permit(self, channel_id: int, user_id: int) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                "delete from temp_channel_permits where channel_id = ? and user_id = ?",
+                (str(channel_id), str(user_id)),
+            )
+
+    async def list_permits(self, channel_id: int) -> Sequence[sqlite3.Row]:
+        return await asyncio.to_thread(self._list_permits, channel_id)
+
+    def _list_permits(self, channel_id: int) -> Sequence[sqlite3.Row]:
+        with self._connect() as connection:
+            return connection.execute(
+                """
+                select * from temp_channel_permits
+                where channel_id = ?
+                order by created_at asc
+                """,
+                (str(channel_id),),
+            ).fetchall()
 
     async def touch_active_temp_channel(self, channel_id: int) -> None:
         await asyncio.to_thread(self._touch_active_temp_channel, channel_id)

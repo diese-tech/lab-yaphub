@@ -10,6 +10,7 @@ from services.room_actions import (
     apply_kick,
     apply_limit,
     apply_lock,
+    apply_permit,
     apply_rename,
     apply_transfer,
     apply_unhide,
@@ -37,6 +38,11 @@ def build_panel_embed(owner: discord.Member) -> discord.Embed:
     embed.add_field(
         name="\U0001f451 Transfer / \U0001f64b Claim / \U0001f462 Kick",
         value="Manage membership.",
+        inline=True,
+    )
+    embed.add_field(
+        name="\U0001f39f Permit",
+        value="Give someone standing access even while hidden/locked.",
         inline=True,
     )
     embed.set_footer(text="YapHub")
@@ -123,13 +129,37 @@ class KickSelect(ui.UserSelect):
         if not isinstance(target, discord.Member):
             await interaction.response.send_message("Pick a server member.", ephemeral=True)
             return
-        await apply_kick(interaction, channel, target)
+        await apply_kick(bot, interaction, channel, target)
 
 
 class KickView(ui.View):
     def __init__(self, channel_id: int) -> None:
         super().__init__(timeout=60)
         self.add_item(KickSelect(channel_id))
+
+
+class PermitSelect(ui.UserSelect):
+    def __init__(self, channel_id: int) -> None:
+        super().__init__(placeholder="Choose a member to permit", min_values=1, max_values=1)
+        self.channel_id = channel_id
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        bot = interaction.client
+        channel = await resolve_owned_temp_channel_by_id(interaction, bot.storage, self.channel_id)
+        if channel is None:
+            return
+
+        target = self.values[0]
+        if not isinstance(target, discord.Member):
+            await interaction.response.send_message("Pick a server member.", ephemeral=True)
+            return
+        await apply_permit(bot, interaction, channel, target)
+
+
+class PermitView(ui.View):
+    def __init__(self, channel_id: int) -> None:
+        super().__init__(timeout=60)
+        self.add_item(PermitSelect(channel_id))
 
 
 class RoomControlPanel(ui.View):
@@ -210,6 +240,18 @@ class RoomControlPanel(ui.View):
         await interaction.response.send_message(
             "Choose who to transfer ownership to:",
             view=TransferView(channel.id),
+            ephemeral=True,
+        )
+
+    @ui.button(label="Permit", emoji="\U0001f39f", style=discord.ButtonStyle.secondary, custom_id="yaphub_panel:permit", row=1)
+    async def permit_button(self, interaction: discord.Interaction, button: ui.Button) -> None:
+        channel = await self._resolve(interaction)
+        if channel is None:
+            return
+        await interaction.response.send_message(
+            "Choose who to permit (they keep access to this room even while it is "
+            "hidden or locked, until unpermitted or the room closes):",
+            view=PermitView(channel.id),
             ephemeral=True,
         )
 

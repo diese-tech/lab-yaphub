@@ -4,10 +4,12 @@ import time
 import discord
 
 from services.permissions import (
+    grant_member_access,
     hide_temp_channel,
     is_hidden,
     is_locked,
     lock_temp_channel,
+    revoke_member_overwrites,
     unhide_temp_channel,
     unlock_temp_channel,
 )
@@ -103,6 +105,16 @@ async def apply_transfer(
     )
 
 
+async def permitted_members(bot, guild: discord.Guild, channel_id: int) -> tuple[discord.Member, ...]:
+    rows = await bot.storage.list_permits(channel_id)
+    members = []
+    for row in rows:
+        member = guild.get_member(int(row["user_id"]))
+        if member is not None:
+            members.append(member)
+    return tuple(members)
+
+
 async def apply_lock(bot, interaction: discord.Interaction, channel: discord.VoiceChannel) -> None:
     owner = None
     record = await bot.storage.get_active_temp_channel(channel.id)
@@ -113,6 +125,7 @@ async def apply_lock(bot, interaction: discord.Interaction, channel: discord.Voi
         channel,
         reason=f"YapHub lock by user {interaction.user.id}",
         owner=owner,
+        extra_allowed=await permitted_members(bot, channel.guild, channel.id),
     )
     await interaction.response.send_message(
         "Locked your Yap room.",
@@ -138,6 +151,7 @@ async def apply_hide(bot, interaction: discord.Interaction, channel: discord.Voi
         channel,
         reason=f"YapHub hide by user {interaction.user.id}",
         owner=owner,
+        extra_allowed=await permitted_members(bot, channel.guild, channel.id),
     )
     await interaction.response.send_message(
         "Hid your Yap room. Only current members can see it.",
@@ -157,6 +171,7 @@ def build_room_info_embed(
     channel: discord.VoiceChannel,
     record,
     guild: discord.Guild,
+    permitted: tuple[discord.Member, ...] = (),
 ) -> discord.Embed:
     owner = guild.get_member(int(record["owner_user_id"]))
     states = []
@@ -181,11 +196,17 @@ def build_room_info_embed(
     )
     embed.add_field(name="State", value=" / ".join(states), inline=True)
     embed.add_field(name="Created", value=str(record["created_at"]), inline=True)
+    if permitted:
+        shown = ", ".join(member.mention for member in permitted[:15])
+        if len(permitted) > 15:
+            shown += f" +{len(permitted) - 15} more"
+        embed.add_field(name="Permitted", value=shown, inline=False)
     embed.set_footer(text="YapHub")
     return embed
 
 
 async def apply_kick(
+    bot,
     interaction: discord.Interaction,
     channel: discord.VoiceChannel,
     member: discord.Member,
@@ -214,8 +235,59 @@ async def apply_kick(
         )
         return
 
+    # Kicking someone is also revoking their pass: drop any permit and their
+    # standing allows so the departure revocation can't be skipped.
+    await bot.storage.remove_permit(channel.id, member.id)
+    try:
+        await revoke_member_overwrites(
+            channel, member, reason=f"YapHub kick by user {interaction.user.id}"
+        )
+    except (discord.Forbidden, discord.HTTPException):
+        logger.exception("Failed to revoke overwrites for kicked member %s", member.id)
+
     await interaction.response.send_message(
         f"Removed {member.mention} from your Yap room.",
+        ephemeral=True,
+    )
+
+
+async def apply_permit(
+    bot,
+    interaction: discord.Interaction,
+    channel: discord.VoiceChannel,
+    member: discord.Member,
+) -> None:
+    if member.bot:
+        await interaction.response.send_message(
+            "Permits can only be given to server members.",
+            ephemeral=True,
+        )
+        return
+
+    await bot.storage.add_permit(channel.id, member.id)
+    await grant_member_access(
+        channel, member, reason=f"YapHub permit by user {interaction.user.id}"
+    )
+    await interaction.response.send_message(
+        f"Permitted {member.mention}. They can see and join this room even while "
+        "it is hidden or locked, and keep access if they leave.",
+        ephemeral=True,
+    )
+
+
+async def apply_unpermit(
+    bot,
+    interaction: discord.Interaction,
+    channel: discord.VoiceChannel,
+    member: discord.Member,
+) -> None:
+    await bot.storage.remove_permit(channel.id, member.id)
+    await revoke_member_overwrites(
+        channel, member, reason=f"YapHub unpermit by user {interaction.user.id}"
+    )
+    await interaction.response.send_message(
+        f"Removed {member.mention}'s permit. If they are in the room they can stay, "
+        "but they lose re-entry to it while it is hidden or locked.",
         ephemeral=True,
     )
 

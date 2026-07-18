@@ -217,7 +217,14 @@ async def cleanup_temp_channel(
         await bot.storage.touch_active_temp_channel(channel.id)
         if leaver is not None:
             record = await bot.storage.get_active_temp_channel(channel.id)
-            if record is not None and int(record["owner_user_id"]) != leaver.id:
+            permitted_ids = {
+                int(row["user_id"]) for row in await bot.storage.list_permits(channel.id)
+            }
+            if (
+                record is not None
+                and int(record["owner_user_id"]) != leaver.id
+                and leaver.id not in permitted_ids
+            ):
                 try:
                     await revoke_member_overwrites(
                         channel,

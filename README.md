@@ -23,7 +23,10 @@ Never commit the bot token to GitHub.
 - `/yap profile list` lists configured profiles
 - `/yap profile delete` removes a profile (autocomplete + confirm/cancel buttons)
 - Every temp room gets an in-channel control panel (lock, unlock, hide, unhide,
-  rename, limit, transfer, claim, kick) so members don't need to remember slash commands
+  rename, limit, transfer, claim, permit, kick) so members don't need to remember slash commands
+- `/yap permit` / `/yap unpermit` manage a per-room allow list: permitted members
+  keep view/connect access while the room is hidden or locked and after leaving;
+  the list persists across bot restarts and clears when the room closes
 - `/yap room` shows a read-only info embed for the room you are in
 - `/yap profile create` supports an optional default user limit and a
   `{user}` name template per lobby
