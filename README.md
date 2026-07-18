@@ -22,8 +22,13 @@ Never commit the bot token to GitHub.
 - `/yap profile create` adds additional category-scoped Join to Yap sections
 - `/yap profile list` lists configured profiles
 - `/yap profile delete` removes a profile (autocomplete + confirm/cancel buttons)
-- Every temp room gets an in-channel control panel (lock, unlock, rename, limit,
-  transfer, claim, kick) so members don't need to remember slash commands
+- Every temp room gets an in-channel control panel (lock, unlock, hide, unhide,
+  rename, limit, transfer, claim, kick) so members don't need to remember slash commands
+- `/yap room` shows a read-only info embed for the room you are in
+- `/yap profile create` supports an optional default user limit and a
+  `{user}` name template per lobby
+- Room commands have light anti-spam cooldowns, and renames respect Discord's
+  2-per-10-minutes channel rename limit with an honest error message
 - Temporary rooms are persisted in SQLite
 - One active owned temp room is enforced per user per guild
 - Restart reconciliation removes stale records and deletes empty orphan temp rooms

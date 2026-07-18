@@ -1,7 +1,5 @@
-import asyncio
 import logging
 import os
-from collections import defaultdict
 from collections.abc import Mapping
 
 import discord
@@ -45,9 +43,10 @@ class YapHubBot(commands.Bot):
         self.profile_cache: dict[int, Mapping[str, object]] = {}
         self.active_temp_channel_ids: set[int] = set()
         self.notification_cooldowns: dict[tuple[int, int], float] = {}
-        self.user_creation_locks: defaultdict[tuple[int, int], asyncio.Lock] = defaultdict(
-            asyncio.Lock
-        )
+        # (guild_id, user_id) -> [Lock, refcount]; entries are evicted by
+        # create_temp_room once the last holder releases, so the dict does
+        # not grow unboundedly over the process lifetime.
+        self.user_creation_locks: dict[tuple[int, int], list] = {}
         self.started_once = False
 
     async def setup_hook(self) -> None:
@@ -84,8 +83,11 @@ bot = YapHubBot()
 async def on_app_command_error(
     interaction: discord.Interaction, error: app_commands.AppCommandError
 ) -> None:
-    logger.error("Unhandled app command error", exc_info=error)
-    message = "Something went wrong running that command. Please try again."
+    if isinstance(error, app_commands.CommandOnCooldown):
+        message = f"You're doing that too fast. Try again in {error.retry_after:.0f} seconds."
+    else:
+        logger.error("Unhandled app command error", exc_info=error)
+        message = "Something went wrong running that command. Please try again."
     try:
         if interaction.response.is_done():
             await interaction.followup.send(message, ephemeral=True)

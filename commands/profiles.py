@@ -24,6 +24,10 @@ class ProfileGroup(app_commands.Group):
         self.bot = bot
 
     @app_commands.command(name="create", description="Create a new Join to Yap profile")
+    @app_commands.describe(
+        default_limit="Default user limit for rooms from this lobby (0 = unlimited)",
+        name_template="Room name template; {user} becomes the member's display name",
+    )
     async def create(
         self,
         interaction: discord.Interaction,
@@ -31,6 +35,8 @@ class ProfileGroup(app_commands.Group):
         category: discord.CategoryChannel | None = None,
         lobby_channel: discord.VoiceChannel | None = None,
         lobby_name: str | None = None,
+        default_limit: app_commands.Range[int, 0, 99] | None = None,
+        name_template: app_commands.Range[str, 1, 100] | None = None,
     ) -> None:
         if not require_manage_channels(interaction):
             await interaction.response.send_message(
@@ -78,17 +84,22 @@ class ProfileGroup(app_commands.Group):
             join_channel_id=lobby_channel.id,
             target_category_id=target_category.id if target_category else None,
             created_by_user_id=interaction.user.id,
+            default_user_limit=default_limit,
+            temp_name_template=name_template.strip() if name_template else None,
         )
         self.bot.profile_cache[int(profile["join_channel_id"])] = profile
 
-        await interaction.response.send_message(
-            (
-                f"Created profile `{name}`.\n"
-                f"Lobby: {lobby_channel.mention}\n"
-                f"Target category: {target_category.name if target_category else 'Top level'}"
-            ),
-            ephemeral=True,
-        )
+        lines = [
+            f"Created profile `{name}`.",
+            f"Lobby: {lobby_channel.mention}",
+            f"Target category: {target_category.name if target_category else 'Top level'}",
+        ]
+        if default_limit:
+            lines.append(f"Default limit: `{default_limit}`")
+        if name_template:
+            lines.append(f"Name template: `{name_template.strip()}`")
+
+        await interaction.response.send_message("\n".join(lines), ephemeral=True)
 
     @app_commands.command(name="list", description="List configured Join to Yap profiles")
     async def list_profiles(self, interaction: discord.Interaction) -> None:

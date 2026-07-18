@@ -5,10 +5,13 @@ import discord
 from discord import app_commands
 
 from commands.owner_controls import (
+    hide_owned_temp_channel,
     limit_temp_channel,
     lock_owned_temp_channel,
     rename_temp_channel,
+    show_room_info,
     transfer_temp_channel,
+    unhide_owned_temp_channel,
     unlock_owned_temp_channel,
 )
 from commands.profiles import ProfileGroup
@@ -114,7 +117,9 @@ class YapGroup(app_commands.Group):
                 "`/yap rename name:<name>` - Rename your current Yap room.\n"
                 "`/yap limit count:<0-99>` - Set a user limit. Use `0` for unlimited.\n"
                 "`/yap transfer user:<member>` - Transfer ownership to someone in the room.\n"
-                "`/yap lock` / `/yap unlock` - Control new joins.\n\n"
+                "`/yap lock` / `/yap unlock` - Control new joins.\n"
+                "`/yap hide` / `/yap unhide` - Control who can see the room.\n"
+                "`/yap room` - Show info about the room you are in.\n\n"
                 "`/yap profile create` is available for advanced/manual setups."
             ),
             ephemeral=True,
@@ -151,11 +156,18 @@ class YapGroup(app_commands.Group):
                     if isinstance(category, discord.CategoryChannel):
                         category_name = category.name
 
+                extras = []
+                if profile["default_user_limit"]:
+                    extras.append(f"limit {profile['default_user_limit']}")
+                if profile["temp_name_template"]:
+                    extras.append(f"template \"{profile['temp_name_template']}\"")
+
                 lines.append(
                     (
                         f"- {profile['name']}: "
                         f"{lobby_channel.mention if lobby_channel else profile['join_channel_id']} "
                         f"-> {category_name}"
+                        + (f" ({', '.join(extras)})" if extras else "")
                     )
                 )
 
@@ -218,10 +230,12 @@ class YapGroup(app_commands.Group):
         )
 
     @app_commands.command(name="rename", description="Rename your active Yap room")
+    @app_commands.checks.cooldown(1, 5.0)
     async def rename(self, interaction: discord.Interaction, name: str) -> None:
         await rename_temp_channel(self.bot, interaction, name)
 
     @app_commands.command(name="limit", description="Set the user limit for your active Yap room")
+    @app_commands.checks.cooldown(1, 5.0)
     async def limit(
         self,
         interaction: discord.Interaction,
@@ -230,13 +244,31 @@ class YapGroup(app_commands.Group):
         await limit_temp_channel(self.bot, interaction, count)
 
     @app_commands.command(name="transfer", description="Transfer your active Yap room to another member")
+    @app_commands.checks.cooldown(1, 5.0)
     async def transfer(self, interaction: discord.Interaction, user: discord.Member) -> None:
         await transfer_temp_channel(self.bot, interaction, user)
 
     @app_commands.command(name="lock", description="Lock your active Yap room")
+    @app_commands.checks.cooldown(1, 5.0)
     async def lock(self, interaction: discord.Interaction) -> None:
         await lock_owned_temp_channel(self.bot, interaction)
 
     @app_commands.command(name="unlock", description="Unlock your active Yap room")
+    @app_commands.checks.cooldown(1, 5.0)
     async def unlock(self, interaction: discord.Interaction) -> None:
         await unlock_owned_temp_channel(self.bot, interaction)
+
+    @app_commands.command(name="hide", description="Hide your active Yap room from non-members")
+    @app_commands.checks.cooldown(1, 5.0)
+    async def hide(self, interaction: discord.Interaction) -> None:
+        await hide_owned_temp_channel(self.bot, interaction)
+
+    @app_commands.command(name="unhide", description="Make your active Yap room visible again")
+    @app_commands.checks.cooldown(1, 5.0)
+    async def unhide(self, interaction: discord.Interaction) -> None:
+        await unhide_owned_temp_channel(self.bot, interaction)
+
+    @app_commands.command(name="room", description="Show info about the Yap room you are in")
+    @app_commands.checks.cooldown(1, 5.0)
+    async def room(self, interaction: discord.Interaction) -> None:
+        await show_room_info(self.bot, interaction)
