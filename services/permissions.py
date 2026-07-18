@@ -36,6 +36,18 @@ async def _restrict_default_allow_members(
     setattr(default_overwrite, attr, False)
     await channel.set_permissions(default_role, overwrite=default_overwrite, reason=reason)
 
+    # Role-level allows (typically synced from the category) union-override the
+    # @everyone deny in Discord's permission resolution, so they must be
+    # flipped to deny too or role holders bypass the restriction entirely.
+    for target, overwrite in list(channel.overwrites.items()):
+        if (
+            isinstance(target, discord.Role)
+            and target != default_role
+            and getattr(overwrite, attr) is True
+        ):
+            setattr(overwrite, attr, False)
+            await channel.set_permissions(target, overwrite=overwrite, reason=reason)
+
     allowed_members = list(channel.members)
     if owner is not None and all(member.id != owner.id for member in allowed_members):
         allowed_members.append(owner)
@@ -53,9 +65,52 @@ async def _lift_default_restriction(
 ) -> None:
     await _clear_overwrite_attr(channel, channel.guild.default_role, attr, reason)
 
+    category = channel.category
     for target, overwrite in list(channel.overwrites.items()):
         if isinstance(target, discord.Member) and getattr(overwrite, attr) is True:
             await _clear_overwrite_attr(channel, target, attr, reason)
+        elif (
+            isinstance(target, discord.Role)
+            and target != channel.guild.default_role
+            and getattr(overwrite, attr) is False
+        ):
+            # Restore the category's value for this role (the category is the
+            # permission source of truth); a role the category genuinely denies
+            # stays denied.
+            desired = (
+                getattr(category.overwrites_for(target), attr)
+                if category is not None
+                else None
+            )
+            if desired is not False:
+                setattr(overwrite, attr, desired)
+                if overwrite.is_empty():
+                    await channel.set_permissions(target, overwrite=None, reason=reason)
+                else:
+                    await channel.set_permissions(target, overwrite=overwrite, reason=reason)
+
+
+async def revoke_member_overwrites(
+    channel: discord.VoiceChannel,
+    member: discord.Member,
+    reason: str,
+) -> None:
+    """Drop a departed member's lock/hide allows so leaving (or being kicked)
+    actually removes their access to a restricted room."""
+    overwrite = channel.overwrites_for(member)
+    changed = False
+    for attr in ("connect", "view_channel"):
+        if getattr(overwrite, attr) is not None:
+            setattr(overwrite, attr, None)
+            changed = True
+
+    if not changed:
+        return
+
+    if overwrite.is_empty():
+        await channel.set_permissions(member, overwrite=None, reason=reason)
+    else:
+        await channel.set_permissions(member, overwrite=overwrite, reason=reason)
 
 
 async def lock_temp_channel(

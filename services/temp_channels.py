@@ -8,6 +8,7 @@ from config import DEFAULT_TEMP_CHANNEL_PREFIX
 from services.notifications import notify_duplicate_room
 from services.ownership import active_channel_ids
 from services.panel import send_room_panel
+from services.permissions import revoke_member_overwrites
 from services.room_actions import clear_rename_history
 
 logger = logging.getLogger("yaphub")
@@ -204,12 +205,31 @@ async def _create_temp_room_locked(
     await send_room_panel(temp_channel, member)
 
 
-async def cleanup_temp_channel(bot, channel: discord.VoiceChannel) -> None:
+async def cleanup_temp_channel(
+    bot,
+    channel: discord.VoiceChannel,
+    leaver: discord.Member | None = None,
+) -> None:
     if channel.id not in bot.active_temp_channel_ids:
         return
 
     if len(channel.members) != 0:
         await bot.storage.touch_active_temp_channel(channel.id)
+        if leaver is not None:
+            record = await bot.storage.get_active_temp_channel(channel.id)
+            if record is not None and int(record["owner_user_id"]) != leaver.id:
+                try:
+                    await revoke_member_overwrites(
+                        channel,
+                        leaver,
+                        reason="YapHub revoking room access for departed member",
+                    )
+                except (discord.Forbidden, discord.HTTPException):
+                    logger.exception(
+                        "Failed to revoke overwrites for member %s in channel %s",
+                        leaver.id,
+                        channel.id,
+                    )
         return
 
     try:

@@ -72,8 +72,12 @@ class YapHubBot(commands.Bot):
     ) -> None:
         await create_temp_room(self, member, lobby_channel, profile)
 
-    async def cleanup_temp_channel(self, channel: discord.VoiceChannel) -> None:
-        await cleanup_temp_channel(self, channel)
+    async def cleanup_temp_channel(
+        self,
+        channel: discord.VoiceChannel,
+        leaver: discord.Member | None = None,
+    ) -> None:
+        await cleanup_temp_channel(self, channel, leaver)
 
 
 bot = YapHubBot()
@@ -131,7 +135,7 @@ async def on_voice_state_update(
         return
 
     if before.channel and before.channel.id in bot.active_temp_channel_ids:
-        await bot.cleanup_temp_channel(before.channel)
+        await bot.cleanup_temp_channel(before.channel, leaver=member)
 
     if after.channel and after.channel.id in bot.profile_cache:
         profile = bot.profile_cache[after.channel.id]
