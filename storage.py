@@ -37,6 +37,23 @@ class Storage:
         schema = Path(__file__).with_name("schema.sql").read_text(encoding="utf-8")
         with self._connect() as connection:
             connection.executescript(schema)
+            self._migrate(connection)
+
+    def _migrate(self, connection: sqlite3.Connection) -> None:
+        # schema.sql only creates tables if missing; databases created before a
+        # column existed need it added here.
+        columns = {
+            row["name"]
+            for row in connection.execute("pragma table_info(temp_vc_profiles)")
+        }
+        if "default_user_limit" not in columns:
+            connection.execute(
+                "alter table temp_vc_profiles add column default_user_limit integer"
+            )
+        if "temp_name_template" not in columns:
+            connection.execute(
+                "alter table temp_vc_profiles add column temp_name_template text"
+            )
 
     async def get_or_create_guild_config(self, guild_id: int) -> sqlite3.Row:
         return await asyncio.to_thread(self._get_or_create_guild_config, guild_id)
@@ -100,6 +117,8 @@ class Storage:
         join_channel_id: int,
         target_category_id: int | None,
         created_by_user_id: int,
+        default_user_limit: int | None = None,
+        temp_name_template: str | None = None,
     ) -> sqlite3.Row:
         return await asyncio.to_thread(
             self._create_profile,
@@ -108,6 +127,8 @@ class Storage:
             join_channel_id,
             target_category_id,
             created_by_user_id,
+            default_user_limit,
+            temp_name_template,
         )
 
     def _create_profile(
@@ -117,6 +138,8 @@ class Storage:
         join_channel_id: int,
         target_category_id: int | None,
         created_by_user_id: int,
+        default_user_limit: int | None = None,
+        temp_name_template: str | None = None,
     ) -> sqlite3.Row:
         self._get_or_create_guild_config(guild_id)
         now = utc_now_iso()
@@ -132,10 +155,12 @@ class Storage:
                     join_channel_id,
                     target_category_id,
                     created_by_user_id,
+                    default_user_limit,
+                    temp_name_template,
                     created_at,
                     updated_at
                 )
-                values (?, ?, ?, ?, ?, ?, ?, ?)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     profile_id,
@@ -144,6 +169,8 @@ class Storage:
                     str(join_channel_id),
                     str(target_category_id) if target_category_id else None,
                     str(created_by_user_id),
+                    default_user_limit,
+                    temp_name_template,
                     now,
                     now,
                 ),
@@ -342,6 +369,47 @@ class Storage:
                 "delete from active_temp_channels where channel_id = ?",
                 (str(channel_id),),
             )
+            connection.execute(
+                "delete from temp_channel_permits where channel_id = ?",
+                (str(channel_id),),
+            )
+
+    async def add_permit(self, channel_id: int, user_id: int) -> None:
+        await asyncio.to_thread(self._add_permit, channel_id, user_id)
+
+    def _add_permit(self, channel_id: int, user_id: int) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                insert or ignore into temp_channel_permits (channel_id, user_id, created_at)
+                values (?, ?, ?)
+                """,
+                (str(channel_id), str(user_id), utc_now_iso()),
+            )
+
+    async def remove_permit(self, channel_id: int, user_id: int) -> None:
+        await asyncio.to_thread(self._remove_permit, channel_id, user_id)
+
+    def _remove_permit(self, channel_id: int, user_id: int) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                "delete from temp_channel_permits where channel_id = ? and user_id = ?",
+                (str(channel_id), str(user_id)),
+            )
+
+    async def list_permits(self, channel_id: int) -> Sequence[sqlite3.Row]:
+        return await asyncio.to_thread(self._list_permits, channel_id)
+
+    def _list_permits(self, channel_id: int) -> Sequence[sqlite3.Row]:
+        with self._connect() as connection:
+            return connection.execute(
+                """
+                select * from temp_channel_permits
+                where channel_id = ?
+                order by created_at asc
+                """,
+                (str(channel_id),),
+            ).fetchall()
 
     async def touch_active_temp_channel(self, channel_id: int) -> None:
         await asyncio.to_thread(self._touch_active_temp_channel, channel_id)

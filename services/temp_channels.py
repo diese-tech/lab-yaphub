@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from collections.abc import Mapping
 
@@ -7,6 +8,8 @@ from config import DEFAULT_TEMP_CHANNEL_PREFIX
 from services.notifications import notify_duplicate_room
 from services.ownership import active_channel_ids
 from services.panel import send_room_panel
+from services.permissions import revoke_member_overwrites
+from services.room_actions import clear_rename_history
 
 logger = logging.getLogger("yaphub")
 
@@ -101,72 +104,139 @@ async def create_temp_room(
     lobby_channel: discord.VoiceChannel,
     profile: Mapping[str, object],
 ) -> None:
-    lock = bot.user_creation_locks[(member.guild.id, member.id)]
+    key = (member.guild.id, member.id)
+    entry = bot.user_creation_locks.get(key)
+    if entry is None:
+        entry = bot.user_creation_locks[key] = [asyncio.Lock(), 0]
+    entry[1] += 1
+    try:
+        async with entry[0]:
+            await _create_temp_room_locked(bot, member, lobby_channel, profile)
+    finally:
+        entry[1] -= 1
+        if entry[1] <= 0:
+            bot.user_creation_locks.pop(key, None)
 
-    async with lock:
-        existing_channel = await resolve_existing_owned_channel(bot, member.guild, member.id)
-        if existing_channel is not None:
-            await notify_duplicate_room(bot, member, lobby_channel, existing_channel)
-            return
 
-        category = None
-        category_id = profile["target_category_id"]
-        if category_id:
-            category = member.guild.get_channel(int(category_id))
-            if not isinstance(category, discord.CategoryChannel):
-                category = None
+def _profile_value(profile: Mapping[str, object], key: str):
+    try:
+        return profile[key]
+    except (KeyError, IndexError):
+        return None
 
-        if category is None:
-            category = lobby_channel.category
 
-        guild_config = await bot.storage.get_guild_config(member.guild.id)
-        prefix = DEFAULT_TEMP_CHANNEL_PREFIX
-        if guild_config and guild_config["temp_channel_prefix"] is not None:
-            prefix = str(guild_config["temp_channel_prefix"]).strip()
+def build_temp_channel_name(
+    member: discord.Member,
+    profile: Mapping[str, object],
+    prefix: str,
+) -> str:
+    template = _profile_value(profile, "temp_name_template")
+    if template:
+        return str(template).replace("{user}", member.display_name)[:100]
 
-        temp_channel_name = f"{member.display_name}'s Yap"
-        if prefix:
-            temp_channel_name = f"{prefix} {temp_channel_name}"
+    name = f"{member.display_name}'s Yap"
+    if prefix:
+        name = f"{prefix} {name}"
+    return name[:100]
 
-        temp_channel = await member.guild.create_voice_channel(
-            name=temp_channel_name,
-            category=category,
-            reason=f"YapHub temp VC for user {member.id}",
+
+async def _create_temp_room_locked(
+    bot,
+    member: discord.Member,
+    lobby_channel: discord.VoiceChannel,
+    profile: Mapping[str, object],
+) -> None:
+    existing_channel = await resolve_existing_owned_channel(bot, member.guild, member.id)
+    if existing_channel is not None:
+        await notify_duplicate_room(bot, member, lobby_channel, existing_channel)
+        return
+
+    category = None
+    category_id = profile["target_category_id"]
+    if category_id:
+        category = member.guild.get_channel(int(category_id))
+        if not isinstance(category, discord.CategoryChannel):
+            category = None
+
+    if category is None:
+        category = lobby_channel.category
+
+    guild_config = await bot.storage.get_guild_config(member.guild.id)
+    prefix = DEFAULT_TEMP_CHANNEL_PREFIX
+    if guild_config and guild_config["temp_channel_prefix"] is not None:
+        prefix = str(guild_config["temp_channel_prefix"]).strip()
+
+    create_kwargs: dict[str, object] = {}
+    default_limit = _profile_value(profile, "default_user_limit")
+    if default_limit:
+        create_kwargs["user_limit"] = max(0, min(99, int(default_limit)))
+
+    temp_channel = await member.guild.create_voice_channel(
+        name=build_temp_channel_name(member, profile, prefix),
+        category=category,
+        reason=f"YapHub temp VC for user {member.id}",
+        **create_kwargs,
+    )
+
+    await bot.storage.create_active_temp_channel(
+        channel_id=temp_channel.id,
+        guild_id=member.guild.id,
+        profile_id=str(profile["id"]),
+        owner_user_id=member.id,
+    )
+    bot.active_temp_channel_ids.add(temp_channel.id)
+
+    try:
+        await member.move_to(temp_channel, reason="Moved to newly created Yap room")
+    except (discord.Forbidden, discord.HTTPException):
+        logger.exception(
+            "Failed to move user %s into temp channel %s", member.id, temp_channel.id
         )
-
-        await bot.storage.create_active_temp_channel(
-            channel_id=temp_channel.id,
-            guild_id=member.guild.id,
-            profile_id=str(profile["id"]),
-            owner_user_id=member.id,
-        )
-        bot.active_temp_channel_ids.add(temp_channel.id)
-
         try:
-            await member.move_to(temp_channel, reason="Moved to newly created Yap room")
+            await temp_channel.delete(reason="Cleanup after failed move")
         except (discord.Forbidden, discord.HTTPException):
             logger.exception(
-                "Failed to move user %s into temp channel %s", member.id, temp_channel.id
+                "Failed to cleanup temp channel %s after failed move", temp_channel.id
             )
-            try:
-                await temp_channel.delete(reason="Cleanup after failed move")
-            except (discord.Forbidden, discord.HTTPException):
-                logger.exception(
-                    "Failed to cleanup temp channel %s after failed move", temp_channel.id
-                )
-            await bot.storage.delete_active_temp_channel(temp_channel.id)
-            bot.active_temp_channel_ids.discard(temp_channel.id)
-            return
+        await bot.storage.delete_active_temp_channel(temp_channel.id)
+        bot.active_temp_channel_ids.discard(temp_channel.id)
+        return
 
-        await send_room_panel(temp_channel, member)
+    await send_room_panel(temp_channel, member)
 
 
-async def cleanup_temp_channel(bot, channel: discord.VoiceChannel) -> None:
+async def cleanup_temp_channel(
+    bot,
+    channel: discord.VoiceChannel,
+    leaver: discord.Member | None = None,
+) -> None:
     if channel.id not in bot.active_temp_channel_ids:
         return
 
     if len(channel.members) != 0:
         await bot.storage.touch_active_temp_channel(channel.id)
+        if leaver is not None:
+            record = await bot.storage.get_active_temp_channel(channel.id)
+            permitted_ids = {
+                int(row["user_id"]) for row in await bot.storage.list_permits(channel.id)
+            }
+            if (
+                record is not None
+                and int(record["owner_user_id"]) != leaver.id
+                and leaver.id not in permitted_ids
+            ):
+                try:
+                    await revoke_member_overwrites(
+                        channel,
+                        leaver,
+                        reason="YapHub revoking room access for departed member",
+                    )
+                except (discord.Forbidden, discord.HTTPException):
+                    logger.exception(
+                        "Failed to revoke overwrites for member %s in channel %s",
+                        leaver.id,
+                        channel.id,
+                    )
         return
 
     try:
@@ -177,6 +247,7 @@ async def cleanup_temp_channel(bot, channel: discord.VoiceChannel) -> None:
 
     await bot.storage.delete_active_temp_channel(channel.id)
     bot.active_temp_channel_ids.discard(channel.id)
+    clear_rename_history(channel.id)
 
 
 async def runtime_active_channel_ids(bot) -> set[int]:
