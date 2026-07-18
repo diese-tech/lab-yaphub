@@ -44,6 +44,15 @@ async def apply_transfer(
         )
         return
 
+    existing_owned = await bot.storage.get_active_temp_channel_by_owner(channel.guild.id, user.id)
+    if existing_owned is not None and int(existing_owned["channel_id"]) != channel.id:
+        await interaction.response.send_message(
+            f"{user.mention} already owns another active Yap room. "
+            "They need to close or transfer that one before receiving this one.",
+            ephemeral=True,
+        )
+        return
+
     await bot.storage.transfer_active_temp_channel_owner(channel.id, user.id)
     await interaction.response.send_message(
         f"Transferred ownership of {channel.mention} to {user.mention}.",
@@ -131,6 +140,16 @@ async def apply_claim(bot, interaction: discord.Interaction, channel: discord.Vo
     if any(member.id == owner_id for member in channel.members):
         await interaction.response.send_message(
             "The current owner is still in the room.",
+            ephemeral=True,
+        )
+        return
+
+    existing_owned = await bot.storage.get_active_temp_channel_by_owner(
+        channel.guild.id, interaction.user.id
+    )
+    if existing_owned is not None and int(existing_owned["channel_id"]) != channel.id:
+        await interaction.response.send_message(
+            "You already own another active Yap room. Transfer or close it before claiming a new one.",
             ephemeral=True,
         )
         return
