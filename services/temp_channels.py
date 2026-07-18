@@ -6,6 +6,7 @@ import discord
 from config import DEFAULT_TEMP_CHANNEL_PREFIX
 from services.notifications import notify_duplicate_room
 from services.ownership import active_channel_ids
+from services.panel import send_room_panel
 
 logger = logging.getLogger("yaphub")
 
@@ -13,7 +14,7 @@ logger = logging.getLogger("yaphub")
 async def reconcile_active_temp_channels(bot) -> None:
     tracked_ids: set[int] = set()
 
-    for row in bot.storage.list_active_temp_channels():
+    for row in await bot.storage.list_active_temp_channels():
         guild = bot.get_guild(int(row["guild_id"]))
         channel_id = int(row["channel_id"])
 
@@ -22,7 +23,7 @@ async def reconcile_active_temp_channels(bot) -> None:
                 "Removing stale temp channel record for missing guild %s",
                 row["guild_id"],
             )
-            bot.storage.delete_active_temp_channel(channel_id)
+            await bot.storage.delete_active_temp_channel(channel_id)
             continue
 
         channel = guild.get_channel(channel_id)
@@ -38,19 +39,19 @@ async def reconcile_active_temp_channels(bot) -> None:
                 "Removing stale temp channel record for missing channel %s",
                 channel_id,
             )
-            bot.storage.delete_active_temp_channel(channel_id)
+            await bot.storage.delete_active_temp_channel(channel_id)
             continue
 
         if len(channel.members) == 0:
             try:
                 await channel.delete(reason="YapHub reconcile cleanup for empty temp VC")
-                bot.storage.delete_active_temp_channel(channel_id)
+                await bot.storage.delete_active_temp_channel(channel_id)
                 logger.info("Deleted empty orphan temp channel %s", channel_id)
             except (discord.Forbidden, discord.HTTPException):
                 logger.exception("Failed to delete empty temp channel %s", channel_id)
             continue
 
-        bot.storage.touch_active_temp_channel(channel_id)
+        await bot.storage.touch_active_temp_channel(channel_id)
         tracked_ids.add(channel_id)
 
     bot.active_temp_channel_ids = tracked_ids
@@ -61,7 +62,7 @@ async def resolve_existing_owned_channel(
     guild: discord.Guild,
     owner_user_id: int,
 ) -> discord.VoiceChannel | None:
-    existing_record = bot.storage.get_active_temp_channel_by_owner(guild.id, owner_user_id)
+    existing_record = await bot.storage.get_active_temp_channel_by_owner(guild.id, owner_user_id)
     if existing_record is None:
         return None
 
@@ -76,7 +77,7 @@ async def resolve_existing_owned_channel(
         channel = fetched if isinstance(fetched, discord.VoiceChannel) else None
 
     if not isinstance(channel, discord.VoiceChannel):
-        bot.storage.delete_active_temp_channel(channel_id)
+        await bot.storage.delete_active_temp_channel(channel_id)
         bot.active_temp_channel_ids.discard(channel_id)
         return None
 
@@ -87,7 +88,7 @@ async def resolve_existing_owned_channel(
             logger.exception("Failed to delete empty replaced temp VC %s", channel_id)
             return channel
 
-        bot.storage.delete_active_temp_channel(channel_id)
+        await bot.storage.delete_active_temp_channel(channel_id)
         bot.active_temp_channel_ids.discard(channel_id)
         return None
 
@@ -118,7 +119,7 @@ async def create_temp_room(
         if category is None:
             category = lobby_channel.category
 
-        guild_config = bot.storage.get_guild_config(member.guild.id)
+        guild_config = await bot.storage.get_guild_config(member.guild.id)
         prefix = DEFAULT_TEMP_CHANNEL_PREFIX
         if guild_config and guild_config["temp_channel_prefix"] is not None:
             prefix = str(guild_config["temp_channel_prefix"]).strip()
@@ -133,7 +134,7 @@ async def create_temp_room(
             reason=f"YapHub temp VC for user {member.id}",
         )
 
-        bot.storage.create_active_temp_channel(
+        await bot.storage.create_active_temp_channel(
             channel_id=temp_channel.id,
             guild_id=member.guild.id,
             profile_id=str(profile["id"]),
@@ -153,8 +154,11 @@ async def create_temp_room(
                 logger.exception(
                     "Failed to cleanup temp channel %s after failed move", temp_channel.id
                 )
-            bot.storage.delete_active_temp_channel(temp_channel.id)
+            await bot.storage.delete_active_temp_channel(temp_channel.id)
             bot.active_temp_channel_ids.discard(temp_channel.id)
+            return
+
+        await send_room_panel(temp_channel, member)
 
 
 async def cleanup_temp_channel(bot, channel: discord.VoiceChannel) -> None:
@@ -162,7 +166,7 @@ async def cleanup_temp_channel(bot, channel: discord.VoiceChannel) -> None:
         return
 
     if len(channel.members) != 0:
-        bot.storage.touch_active_temp_channel(channel.id)
+        await bot.storage.touch_active_temp_channel(channel.id)
         return
 
     try:
@@ -171,9 +175,9 @@ async def cleanup_temp_channel(bot, channel: discord.VoiceChannel) -> None:
         logger.exception("Failed to delete empty temp VC %s", channel.id)
         return
 
-    bot.storage.delete_active_temp_channel(channel.id)
+    await bot.storage.delete_active_temp_channel(channel.id)
     bot.active_temp_channel_ids.discard(channel.id)
 
 
-def runtime_active_channel_ids(bot) -> set[int]:
-    return active_channel_ids(bot.storage.list_active_temp_channels())
+async def runtime_active_channel_ids(bot) -> set[int]:
+    return active_channel_ids(await bot.storage.list_active_temp_channels())
