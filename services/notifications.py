@@ -18,7 +18,7 @@ async def notify_duplicate_room(
     existing_channel: discord.VoiceChannel,
 ) -> None:
     cooldown_seconds = DEFAULT_NOTIFICATION_COOLDOWN_SECONDS
-    guild_config = bot.storage.get_guild_config(member.guild.id)
+    guild_config = await bot.storage.get_guild_config(member.guild.id)
     if guild_config:
         cooldown_seconds = int(
             guild_config["notification_cooldown_seconds"]

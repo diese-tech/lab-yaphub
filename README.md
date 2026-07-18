@@ -18,13 +18,17 @@ Never commit the bot token to GitHub.
 
 - `/yap setup` creates a Join to Yap lobby in the selected category
 - `/yap config` shows the stored guild configuration
-- `/yap reset` clears configured profiles for a guild
+- `/yap reset` clears configured profiles for a guild (confirm/cancel buttons)
 - `/yap profile create` adds additional category-scoped Join to Yap sections
 - `/yap profile list` lists configured profiles
-- `/yap profile delete` removes a profile
+- `/yap profile delete` removes a profile (autocomplete + confirm/cancel buttons)
+- Every temp room gets an in-channel control panel (lock, unlock, rename, limit,
+  transfer, claim, kick) so members don't need to remember slash commands
 - Temporary rooms are persisted in SQLite
 - One active owned temp room is enforced per user per guild
 - Restart reconciliation removes stale records and deletes empty orphan temp rooms
+- All SQLite access runs off the event loop via `asyncio.to_thread`
+- Slash command errors are caught centrally and reported to the user instead of failing silently
 
 ## Product Direction
 

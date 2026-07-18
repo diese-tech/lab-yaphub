@@ -5,11 +5,13 @@ from collections import defaultdict
 from collections.abc import Mapping
 
 import discord
+from discord import app_commands
 from discord.ext import commands, tasks
 from dotenv import load_dotenv
 
 from commands import YapGroup
 from config import DATABASE_PATH, RECONCILE_INTERVAL_MINUTES
+from services.panel import RoomControlPanel
 from services.temp_channels import (
     cleanup_temp_channel,
     create_temp_room,
@@ -49,15 +51,16 @@ class YapHubBot(commands.Bot):
         self.started_once = False
 
     async def setup_hook(self) -> None:
-        self.storage.initialize()
+        await self.storage.initialize()
         self.tree.add_command(YapGroup(self))
+        self.add_view(RoomControlPanel())
 
     async def load_runtime_cache(self) -> None:
         self.profile_cache = {
             int(profile["join_channel_id"]): profile
-            for profile in self.storage.list_all_profiles()
+            for profile in await self.storage.list_all_profiles()
         }
-        self.active_temp_channel_ids = runtime_active_channel_ids(self)
+        self.active_temp_channel_ids = await runtime_active_channel_ids(self)
 
     async def reconcile_active_temp_channels(self) -> None:
         await reconcile_active_temp_channels(self)
@@ -75,6 +78,21 @@ class YapHubBot(commands.Bot):
 
 
 bot = YapHubBot()
+
+
+@bot.tree.error
+async def on_app_command_error(
+    interaction: discord.Interaction, error: app_commands.AppCommandError
+) -> None:
+    logger.error("Unhandled app command error", exc_info=error)
+    message = "Something went wrong running that command. Please try again."
+    try:
+        if interaction.response.is_done():
+            await interaction.followup.send(message, ephemeral=True)
+        else:
+            await interaction.response.send_message(message, ephemeral=True)
+    except (discord.Forbidden, discord.HTTPException):
+        logger.exception("Failed to notify user about a command error")
 
 
 @bot.event
