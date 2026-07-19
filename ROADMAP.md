@@ -3,7 +3,9 @@
 This is the living, version-controlled source of truth for YapHub's
 infrastructure and scaling roadmap. It consolidates the history and decisions
 from [Issue #5](https://github.com/diese-tech/lab-yaphub/issues/5) (closed)
-and carries the phases that issue deferred forward.
+and carries the phases that issue deferred forward. Tracked by
+[Issue #17](https://github.com/diese-tech/lab-yaphub/issues/17); update this
+file, not that issue's comments, when the plan changes.
 
 ## How to use this document
 
