@@ -57,7 +57,24 @@ async def reconcile_active_temp_channels(bot) -> None:
         await bot.storage.touch_active_temp_channel(channel_id)
         tracked_ids.add(channel_id)
 
+        if row["panel_message_id"] is None:
+            await _backfill_panel_message(bot, guild, channel, row)
+
     bot.active_temp_channel_ids = tracked_ids
+
+
+async def _backfill_panel_message(bot, guild: discord.Guild, channel: discord.VoiceChannel, row) -> None:
+    # Rooms created before panel_message_id existed (or whose original post
+    # failed) have no way to be refreshed on ownership change. Repost a
+    # fresh panel and persist its id so it self-heals on the next
+    # reconcile; if the owner has left the guild, leave it for a later pass.
+    owner = guild.get_member(int(row["owner_user_id"]))
+    if owner is None:
+        return
+
+    panel_message = await send_room_panel(channel, owner)
+    if panel_message is not None:
+        await bot.storage.set_panel_message_id(channel.id, panel_message.id)
 
 
 async def resolve_existing_owned_channel(
