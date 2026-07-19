@@ -6,42 +6,763 @@
     <title>YapHub | Temporary Voice Channels for Discord</title>
     <meta name="description" content="YapHub is a lightweight Discord bot for temporary voice channels, cleaner community voice management, and VoiceMaster-style join-to-create rooms." />
     <style>
-      :root{--bg:#050611;--ink:#f7f7ff;--muted:#a8acc8;--cyan:#23d8ff;--purple:#a855f7;--discord:#5865f2;--lime:#64ffb4;--danger:#ff3df2;--panel:#0c1024;--panel2:#121735;--line:rgba(255,255,255,.18);--hard:#ffffff;--shadow:12px 12px 0 rgba(0,0,0,.8)}*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;min-height:100vh;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--ink);background:linear-gradient(rgba(255,255,255,.035) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.035) 1px,transparent 1px),radial-gradient(circle at 20% 10%,rgba(35,216,255,.22),transparent 28rem),radial-gradient(circle at 80% 12%,rgba(168,85,247,.23),transparent 32rem),linear-gradient(135deg,#04040b,#090b1d 45%,#050611);background-size:42px 42px,42px 42px,auto,auto,auto;line-height:1.55}body:before{content:"";position:fixed;inset:0;pointer-events:none;background:linear-gradient(120deg,transparent 0 45%,rgba(35,216,255,.07) 45% 46%,transparent 46% 100%),repeating-linear-gradient(0deg,rgba(255,255,255,.025) 0 1px,transparent 1px 4px);mix-blend-mode:screen}a{color:inherit}.wrap{width:min(1180px,calc(100% - 28px));margin:0 auto;padding:24px 0 64px}header{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:34px;border:3px solid var(--hard);background:#070816;box-shadow:8px 8px 0 rgba(88,101,242,.7);padding:12px 14px}.brand{display:flex;align-items:center;gap:12px;font-weight:1000;letter-spacing:-.04em;text-transform:uppercase}.logo{width:52px;height:52px;border-radius:0;object-fit:cover;border:3px solid var(--hard);box-shadow:0 0 22px rgba(35,216,255,.75)}.tag{display:block;color:var(--cyan);font-size:.72rem;letter-spacing:.18em;margin-top:-4px}.nav{display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end}.nav a{text-decoration:none;color:var(--ink);border:2px solid var(--hard);padding:9px 13px;background:#11162f;font-weight:900;text-transform:uppercase;font-size:.78rem}.nav a:hover{background:var(--discord)}.hero{display:grid;grid-template-columns:.96fr 1.04fr;gap:24px;align-items:stretch}.hero-copy{border:3px solid var(--hard);background:linear-gradient(135deg,rgba(12,16,36,.96),rgba(7,8,22,.94));box-shadow:var(--shadow);padding:30px;position:relative;overflow:hidden}.hero-copy:after{content:"VOICE OPS";position:absolute;right:-18px;bottom:8px;color:rgba(255,255,255,.035);font-size:7rem;font-weight:1000;letter-spacing:-.08em;line-height:1}.eyebrow{display:inline-flex;align-items:center;gap:8px;margin-bottom:18px;color:#020412;background:var(--lime);border:2px solid var(--hard);padding:7px 10px;font-size:.8rem;font-weight:1000;letter-spacing:.08em;text-transform:uppercase;box-shadow:5px 5px 0 rgba(0,0,0,.8)}h1{position:relative;margin:0;font-size:clamp(3.2rem,7.8vw,6.4rem);line-height:.88;letter-spacing:-.09em;text-transform:uppercase;text-shadow:4px 4px 0 rgba(88,101,242,.8),0 0 28px rgba(35,216,255,.25);z-index:1}.lead{position:relative;max-width:720px;margin:24px 0 0;color:var(--muted);font-size:clamp(1.05rem,1.8vw,1.26rem);z-index:1}.actions{display:flex;gap:14px;flex-wrap:wrap;margin-top:30px;position:relative;z-index:1}.button{display:inline-flex;align-items:center;justify-content:center;min-height:54px;padding:0 20px;border:3px solid var(--hard);font-weight:1000;text-decoration:none;text-transform:uppercase;letter-spacing:-.02em;box-shadow:7px 7px 0 rgba(0,0,0,.85);transition:transform .12s ease,box-shadow .12s ease,background .12s ease}.button:hover{transform:translate(3px,3px);box-shadow:4px 4px 0 rgba(0,0,0,.85)}.primary{background:linear-gradient(135deg,var(--cyan),var(--purple));color:#030412}.secondary{background:#151b3a;color:var(--ink)}.brand-card{border:3px solid var(--hard);background:#070816;box-shadow:var(--shadow);padding:12px;overflow:hidden}.banner{width:100%;display:block;border:3px solid var(--hard);box-shadow:0 0 36px rgba(35,216,255,.22)}.mock{margin-top:12px;border:3px solid var(--hard);background:#101529;padding:16px}.server-title{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;text-transform:uppercase;font-weight:1000}.pill{display:inline-flex;padding:6px 9px;background:var(--lime);color:#030412;border:2px solid var(--hard);font-size:.74rem;font-weight:1000}.channel-list{display:grid;gap:8px}.channel{padding:11px 12px;background:#0b0f21;border:2px solid rgba(255,255,255,.28);font-weight:800}.channel small{display:block;color:var(--muted);margin-top:2px;font-weight:600}.created{border-color:var(--cyan);box-shadow:inset 5px 0 0 var(--cyan);background:rgba(35,216,255,.08)}.stats{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;margin-top:24px;position:relative;z-index:1}.stat{border:3px solid var(--hard);background:#060814;padding:14px 16px;box-shadow:7px 7px 0 rgba(88,101,242,.65)}.stat strong{display:block;font-size:clamp(2.2rem,4vw,3.6rem);line-height:.9;letter-spacing:-.08em;text-transform:uppercase;color:var(--cyan);text-shadow:3px 3px 0 rgba(168,85,247,.7)}.stat span{display:block;margin-top:8px;color:var(--muted);font-weight:900;text-transform:uppercase;font-size:.78rem;letter-spacing:.06em}.stat small{display:block;margin-top:8px;color:rgba(255,255,255,.45);font-weight:800;text-transform:uppercase;font-size:.68rem}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:42px}.card{border:3px solid var(--hard);background:linear-gradient(135deg,#101529,#080a18);padding:22px;box-shadow:8px 8px 0 rgba(0,0,0,.82)}.grid .card:nth-child(2){box-shadow:8px 8px 0 rgba(88,101,242,.75)}.grid .card:nth-child(3){box-shadow:8px 8px 0 rgba(35,216,255,.45)}h2{margin:0 0 12px;font-size:clamp(1.9rem,3vw,2.65rem);line-height:.95;letter-spacing:-.07em;text-transform:uppercase}h3{margin:0 0 8px;font-size:1.1rem;text-transform:uppercase;letter-spacing:-.03em}p{margin:0}.muted{color:var(--muted)}.section{margin-top:62px}.two-col{display:grid;grid-template-columns:.92fr 1.08fr;gap:18px;align-items:start}.steps{counter-reset:step;display:grid;gap:12px}.step{counter-increment:step;display:grid;grid-template-columns:48px 1fr;gap:14px;align-items:start;border:2px solid rgba(255,255,255,.18);background:rgba(255,255,255,.04);padding:12px}.step:before{content:"0" counter(step);width:44px;height:44px;display:grid;place-items:center;background:var(--discord);border:2px solid var(--hard);font-weight:1000;color:white}.code{overflow-wrap:anywhere;padding:14px;border:2px solid rgba(255,255,255,.24);background:#03040c;color:#dce5ff;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.9rem;box-shadow:inset 5px 0 0 var(--purple)}.permissions{display:flex;flex-wrap:wrap;gap:10px;margin-top:16px}.permission{padding:8px 11px;border:2px solid rgba(255,255,255,.26);background:#0b0f21;color:var(--ink);font-size:.88rem;font-weight:800}.final{background:linear-gradient(135deg,rgba(88,101,242,.28),rgba(35,216,255,.14));position:relative;overflow:hidden}.final:after{content:"/yap setup";position:absolute;right:18px;bottom:6px;color:rgba(255,255,255,.07);font-size:4rem;font-weight:1000;letter-spacing:-.07em}footer{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-top:64px;padding:18px 0 0;color:var(--muted);border-top:3px solid var(--hard);font-weight:800}@media(max-width:860px){header,.hero,.two-col,.grid,.stats{grid-template-columns:1fr}header{align-items:flex-start;flex-direction:column}.nav{justify-content:flex-start}.hero-copy{padding:22px}.hero-copy:after{font-size:4rem}.final:after{display:none}}
+      /* ==========================================================================
+         Design tokens
+         ========================================================================== */
+
+      :root {
+        --bg: #050611;
+        --ink: #f7f7ff;
+        --muted: #a8acc8;
+        --cyan: #23d8ff;
+        --purple: #a855f7;
+        --discord: #5865f2;
+        --lime: #64ffb4;
+        --danger: #ff3df2;
+        --panel: #0c1024;
+        --panel2: #121735;
+        --line: rgba(255, 255, 255, 0.18);
+        --hard: #ffffff;
+        --shadow: 12px 12px 0 rgba(0, 0, 0, 0.8);
+      }
+
+      /* ==========================================================================
+         Base / reset
+         ========================================================================== */
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        color: var(--ink);
+        background:
+          linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+          radial-gradient(circle at 20% 10%, rgba(35, 216, 255, 0.22), transparent 28rem),
+          radial-gradient(circle at 80% 12%, rgba(168, 85, 247, 0.23), transparent 32rem),
+          linear-gradient(135deg, #04040b, #090b1d 45%, #050611);
+        background-size: 42px 42px, 42px 42px, auto, auto, auto;
+        line-height: 1.55;
+      }
+
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        background:
+          linear-gradient(120deg, transparent 0 45%, rgba(35, 216, 255, 0.07) 45% 46%, transparent 46% 100%),
+          repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.025) 0 1px, transparent 1px 4px);
+        mix-blend-mode: screen;
+      }
+
+      a {
+        color: inherit;
+      }
+
+      p {
+        margin: 0;
+      }
+
+      /* ==========================================================================
+         Utilities
+         ========================================================================== */
+
+      .u-muted {
+        color: var(--muted);
+      }
+
+      /* ==========================================================================
+         Block: page-shell
+         Outer page container / max-width wrapper.
+         ========================================================================== */
+
+      .page-shell {
+        width: min(1180px, calc(100% - 28px));
+        margin: 0 auto;
+        padding: 24px 0 64px;
+      }
+
+      /* ==========================================================================
+         Block: site-header
+         ========================================================================== */
+
+      .site-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 16px;
+        margin-bottom: 34px;
+        border: 3px solid var(--hard);
+        background: #070816;
+        box-shadow: 8px 8px 0 rgba(88, 101, 242, 0.7);
+        padding: 12px 14px;
+      }
+
+      .site-header__brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        font-weight: 1000;
+        letter-spacing: -0.04em;
+        text-transform: uppercase;
+      }
+
+      .site-header__logo {
+        width: 52px;
+        height: 52px;
+        border-radius: 0;
+        object-fit: cover;
+        border: 3px solid var(--hard);
+        box-shadow: 0 0 22px rgba(35, 216, 255, 0.75);
+      }
+
+      .site-header__tag {
+        display: block;
+        color: var(--cyan);
+        font-size: 0.72rem;
+        letter-spacing: 0.18em;
+        margin-top: -4px;
+      }
+
+      .site-header__nav {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+      }
+
+      .site-header__nav-link {
+        text-decoration: none;
+        color: var(--ink);
+        border: 2px solid var(--hard);
+        padding: 9px 13px;
+        background: #11162f;
+        font-weight: 900;
+        text-transform: uppercase;
+        font-size: 0.78rem;
+      }
+
+      .site-header__nav-link:hover {
+        background: var(--discord);
+      }
+
+      /* ==========================================================================
+         Block: button
+         Modifiers: button--primary, button--secondary
+         ========================================================================== */
+
+      .button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 54px;
+        padding: 0 20px;
+        border: 3px solid var(--hard);
+        font-weight: 1000;
+        text-decoration: none;
+        text-transform: uppercase;
+        letter-spacing: -0.02em;
+        box-shadow: 7px 7px 0 rgba(0, 0, 0, 0.85);
+        transition: transform 0.12s ease, box-shadow 0.12s ease, background 0.12s ease;
+      }
+
+      .button:hover {
+        transform: translate(3px, 3px);
+        box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.85);
+      }
+
+      .button--primary {
+        background: linear-gradient(135deg, var(--cyan), var(--purple));
+        color: #030412;
+      }
+
+      .button--secondary {
+        background: #151b3a;
+        color: var(--ink);
+      }
+
+      /* Block: button-row
+         Layout wrapper for one or more buttons placed side by side. Reused
+         in the hero and in the closing CTA card. */
+
+      .button-row {
+        display: flex;
+        gap: 14px;
+        flex-wrap: wrap;
+        margin-top: 30px;
+        position: relative;
+        z-index: 1;
+      }
+
+      /* ==========================================================================
+         Block: hero
+         ========================================================================== */
+
+      .hero {
+        display: grid;
+        grid-template-columns: 0.96fr 1.04fr;
+        gap: 24px;
+        align-items: stretch;
+      }
+
+      .hero__copy {
+        border: 3px solid var(--hard);
+        background: linear-gradient(135deg, rgba(12, 16, 36, 0.96), rgba(7, 8, 22, 0.94));
+        box-shadow: var(--shadow);
+        padding: 30px;
+        position: relative;
+        overflow: hidden;
+      }
+
+      .hero__copy::after {
+        content: "VOICE OPS";
+        position: absolute;
+        right: -18px;
+        bottom: 8px;
+        color: rgba(255, 255, 255, 0.035);
+        font-size: 7rem;
+        font-weight: 1000;
+        letter-spacing: -0.08em;
+        line-height: 1;
+      }
+
+      .hero__eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 18px;
+        color: #020412;
+        background: var(--lime);
+        border: 2px solid var(--hard);
+        padding: 7px 10px;
+        font-size: 0.8rem;
+        font-weight: 1000;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        box-shadow: 5px 5px 0 rgba(0, 0, 0, 0.8);
+      }
+
+      .hero__title {
+        position: relative;
+        margin: 0;
+        font-size: clamp(3.2rem, 7.8vw, 6.4rem);
+        line-height: 0.88;
+        letter-spacing: -0.09em;
+        text-transform: uppercase;
+        text-shadow: 4px 4px 0 rgba(88, 101, 242, 0.8), 0 0 28px rgba(35, 216, 255, 0.25);
+        z-index: 1;
+      }
+
+      .hero__lead {
+        position: relative;
+        max-width: 720px;
+        margin: 24px 0 0;
+        color: var(--muted);
+        font-size: clamp(1.05rem, 1.8vw, 1.26rem);
+        z-index: 1;
+      }
+
+      /* ==========================================================================
+         Block: stats
+         ========================================================================== */
+
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 14px;
+        margin-top: 24px;
+        position: relative;
+        z-index: 1;
+      }
+
+      .stats__item {
+        border: 3px solid var(--hard);
+        background: #060814;
+        padding: 14px 16px;
+        box-shadow: 7px 7px 0 rgba(88, 101, 242, 0.65);
+      }
+
+      .stats__value {
+        display: block;
+        font-size: clamp(2.2rem, 4vw, 3.6rem);
+        line-height: 0.9;
+        letter-spacing: -0.08em;
+        text-transform: uppercase;
+        color: var(--cyan);
+        text-shadow: 3px 3px 0 rgba(168, 85, 247, 0.7);
+      }
+
+      .stats__label {
+        display: block;
+        margin-top: 8px;
+        color: var(--muted);
+        font-weight: 900;
+        text-transform: uppercase;
+        font-size: 0.78rem;
+        letter-spacing: 0.06em;
+      }
+
+      .stats__meta {
+        display: block;
+        margin-top: 8px;
+        color: rgba(255, 255, 255, 0.45);
+        font-weight: 800;
+        text-transform: uppercase;
+        font-size: 0.68rem;
+      }
+
+      /* ==========================================================================
+         Block: showcase
+         The branded "example Discord server" preview panel in the hero.
+         ========================================================================== */
+
+      .showcase {
+        border: 3px solid var(--hard);
+        background: #070816;
+        box-shadow: var(--shadow);
+        padding: 12px;
+        overflow: hidden;
+      }
+
+      .showcase__banner {
+        width: 100%;
+        display: block;
+        border: 3px solid var(--hard);
+        box-shadow: 0 0 36px rgba(35, 216, 255, 0.22);
+      }
+
+      .showcase__mock {
+        margin-top: 12px;
+        border: 3px solid var(--hard);
+        background: #101529;
+        padding: 16px;
+      }
+
+      .showcase__mock-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 12px;
+        text-transform: uppercase;
+        font-weight: 1000;
+      }
+
+      .showcase__badge {
+        display: inline-flex;
+        padding: 6px 9px;
+        background: var(--lime);
+        color: #030412;
+        border: 2px solid var(--hard);
+        font-size: 0.74rem;
+        font-weight: 1000;
+      }
+
+      .showcase__channel-list {
+        display: grid;
+        gap: 8px;
+      }
+
+      .showcase__channel {
+        padding: 11px 12px;
+        background: #0b0f21;
+        border: 2px solid rgba(255, 255, 255, 0.28);
+        font-weight: 800;
+      }
+
+      .showcase__channel-desc {
+        display: block;
+        color: var(--muted);
+        margin-top: 2px;
+        font-weight: 600;
+      }
+
+      .showcase__channel--created {
+        border-color: var(--cyan);
+        box-shadow: inset 5px 0 0 var(--cyan);
+        background: rgba(35, 216, 255, 0.08);
+      }
+
+      /* ==========================================================================
+         Block: card
+         Generic reusable panel used by the features grid, the setup steps,
+         the two-column info sections, and the closing CTA.
+         Modifiers: card--accent-a, card--accent-b, card--cta
+         ========================================================================== */
+
+      .card {
+        border: 3px solid var(--hard);
+        background: linear-gradient(135deg, #101529, #080a18);
+        padding: 22px;
+        box-shadow: 8px 8px 0 rgba(0, 0, 0, 0.82);
+      }
+
+      .card--accent-a {
+        box-shadow: 8px 8px 0 rgba(88, 101, 242, 0.75);
+      }
+
+      .card--accent-b {
+        box-shadow: 8px 8px 0 rgba(35, 216, 255, 0.45);
+      }
+
+      .card--cta {
+        background: linear-gradient(135deg, rgba(88, 101, 242, 0.28), rgba(35, 216, 255, 0.14));
+        position: relative;
+        overflow: hidden;
+      }
+
+      .card--cta::after {
+        content: "/yap setup";
+        position: absolute;
+        right: 18px;
+        bottom: 6px;
+        color: rgba(255, 255, 255, 0.07);
+        font-size: 4rem;
+        font-weight: 1000;
+        letter-spacing: -0.07em;
+      }
+
+      .card__heading {
+        margin: 0 0 12px;
+        font-size: clamp(1.9rem, 3vw, 2.65rem);
+        line-height: 0.95;
+        letter-spacing: -0.07em;
+        text-transform: uppercase;
+      }
+
+      .card__title,
+      .steps__title {
+        margin: 0 0 8px;
+        font-size: 1.1rem;
+        text-transform: uppercase;
+        letter-spacing: -0.03em;
+      }
+
+      .card__text {
+        margin: 0;
+      }
+
+      /* ==========================================================================
+         Block: page-section
+         Vertical rhythm wrapper for the sections below the hero.
+         Modifier: page-section--split (two-column layout)
+         ========================================================================== */
+
+      .page-section {
+        margin-top: 62px;
+      }
+
+      .page-section--split {
+        display: grid;
+        grid-template-columns: 0.92fr 1.08fr;
+        gap: 18px;
+        align-items: start;
+      }
+
+      /* ==========================================================================
+         Block: features
+         The three-card highlight grid.
+         ========================================================================== */
+
+      .features {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 16px;
+        margin-top: 42px;
+      }
+
+      /* ==========================================================================
+         Block: steps
+         Numbered setup steps. Combined with .card for the outer border /
+         background treatment; .steps itself only governs the internal grid.
+         ========================================================================== */
+
+      .steps {
+        counter-reset: step;
+        display: grid;
+        gap: 12px;
+      }
+
+      .steps__item {
+        counter-increment: step;
+        display: grid;
+        grid-template-columns: 48px 1fr;
+        gap: 14px;
+        align-items: start;
+        border: 2px solid rgba(255, 255, 255, 0.18);
+        background: rgba(255, 255, 255, 0.04);
+        padding: 12px;
+      }
+
+      .steps__item::before {
+        content: "0" counter(step);
+        width: 44px;
+        height: 44px;
+        display: grid;
+        place-items: center;
+        background: var(--discord);
+        border: 2px solid var(--hard);
+        font-weight: 1000;
+        color: white;
+      }
+
+      /* ==========================================================================
+         Block: code-sample
+         ========================================================================== */
+
+      .code-sample {
+        overflow-wrap: anywhere;
+        padding: 14px;
+        border: 2px solid rgba(255, 255, 255, 0.24);
+        background: #03040c;
+        color: #dce5ff;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 0.9rem;
+        box-shadow: inset 5px 0 0 var(--purple);
+      }
+
+      /* ==========================================================================
+         Block: permissions
+         ========================================================================== */
+
+      .permissions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 16px;
+      }
+
+      .permissions__item {
+        padding: 8px 11px;
+        border: 2px solid rgba(255, 255, 255, 0.26);
+        background: #0b0f21;
+        color: var(--ink);
+        font-size: 0.88rem;
+        font-weight: 800;
+      }
+
+      /* ==========================================================================
+         Block: site-footer
+         ========================================================================== */
+
+      .site-footer {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        flex-wrap: wrap;
+        margin-top: 64px;
+        padding: 18px 0 0;
+        color: var(--muted);
+        border-top: 3px solid var(--hard);
+        font-weight: 800;
+      }
+
+      /* ==========================================================================
+         Responsive
+         ========================================================================== */
+
+      @media (max-width: 860px) {
+        .site-header,
+        .hero,
+        .page-section--split,
+        .features,
+        .stats {
+          grid-template-columns: 1fr;
+        }
+
+        .site-header {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+
+        .site-header__nav {
+          justify-content: flex-start;
+        }
+
+        .hero__copy {
+          padding: 22px;
+        }
+
+        .hero__copy::after {
+          font-size: 4rem;
+        }
+
+        .card--cta::after {
+          display: none;
+        }
+      }
     </style>
   </head>
   <body>
-    <div class="wrap">
-      <header>
-        <div class="brand"><img class="logo" src="./assets/yaphub-pfp.png" alt="YapHub logo" /><div>YapHub<span class="tag">Temp voice bot</span></div></div>
-        <nav class="nav" aria-label="YapHub links"><a href="#setup">Setup</a><a href="#permissions">Permissions</a><a href="https://discord.com/oauth2/authorize?client_id=1503456577666154506&permissions=277311728656&integration_type=0&scope=applications.commands+bot">Invite</a></nav>
+    <div class="page-shell">
+      <header class="site-header">
+        <div class="site-header__brand">
+          <img class="site-header__logo" src="./assets/yaphub-pfp.png" alt="YapHub logo" />
+          <div>
+            YapHub
+            <span class="site-header__tag">Temp voice bot</span>
+          </div>
+        </div>
+        <nav class="site-header__nav" aria-label="YapHub links">
+          <a class="site-header__nav-link" href="#setup">Setup</a>
+          <a class="site-header__nav-link" href="#permissions">Permissions</a>
+          <a class="site-header__nav-link" href="https://discord.com/oauth2/authorize?client_id=1503456577666154506&permissions=277311728656&integration_type=0&scope=applications.commands+bot">Invite</a>
+        </nav>
       </header>
       <main>
         <section class="hero">
-          <div class="hero-copy">
-            <div class="eyebrow">Discord voice ops / zero clutter</div>
-            <h1>Stop hoarding dead voice channels.</h1>
-            <p class="lead">YapHub gives your community join-to-create voice rooms that appear when members need them and disappear when they are empty. Cleaner servers, fewer moderation chores, more actual yapping.</p>
-            <div class="actions"><a class="button primary" href="https://discord.com/oauth2/authorize?client_id=1503456577666154506&permissions=277311728656&integration_type=0&scope=applications.commands+bot">Add to Discord</a><a class="button secondary" href="#setup">View setup</a></div>
+          <div class="hero__copy">
+            <div class="hero__eyebrow">Discord voice ops / zero clutter</div>
+            <h1 class="hero__title">Stop hoarding dead voice channels.</h1>
+            <p class="hero__lead">YapHub gives your community join-to-create voice rooms that appear when members need them and disappear when they are empty. Cleaner servers, fewer moderation chores, more actual yapping.</p>
+            <div class="button-row">
+              <a class="button button--primary" href="https://discord.com/oauth2/authorize?client_id=1503456577666154506&permissions=277311728656&integration_type=0&scope=applications.commands+bot">Add to Discord</a>
+              <a class="button button--secondary" href="#setup">View setup</a>
+            </div>
             <div class="stats" aria-label="YapHub public stats">
-              <div class="stat"><strong id="guild-count">—</strong><span>Servers using YapHub</span><small id="stats-updated">Stats loading</small></div>
-              <div class="stat"><strong id="rooms-created">—</strong><span>Temp rooms created</span><small>All-time counter soon</small></div>
+              <div class="stats__item">
+                <strong class="stats__value" id="guild-count">—</strong>
+                <span class="stats__label">Servers using YapHub</span>
+                <small class="stats__meta" id="stats-updated">Stats loading</small>
+              </div>
+              <div class="stats__item">
+                <strong class="stats__value" id="rooms-created">—</strong>
+                <span class="stats__label">Temp rooms created</span>
+                <small class="stats__meta">All-time counter soon</small>
+              </div>
             </div>
           </div>
-          <aside class="brand-card" aria-label="YapHub branding and example Discord voice layout">
-            <img class="banner" src="./assets/yaphub-banner.png" alt="YapHub banner" />
-            <div class="mock">
-              <div class="server-title"><strong>Example Server</strong><span class="pill">Auto cleanup</span></div>
-              <div class="channel-list"><div class="channel">🔊 Join to Yap<small>Members join here to spawn a temporary room.</small></div><div class="channel created">🔊 Diese's Yap<small>Created automatically. One active owned room per server.</small></div><div class="channel">🔊 Lower Div Join to Yap<small>Optional category-specific lobby.</small></div><div class="channel created">🔊 Ranked Review<small>Deleted after the last member leaves.</small></div></div>
+          <aside class="showcase" aria-label="YapHub branding and example Discord voice layout">
+            <img class="showcase__banner" src="./assets/yaphub-banner.png" alt="YapHub banner" />
+            <div class="showcase__mock">
+              <div class="showcase__mock-header">
+                <strong>Example Server</strong>
+                <span class="showcase__badge">Auto cleanup</span>
+              </div>
+              <div class="showcase__channel-list">
+                <div class="showcase__channel">
+                  🔊 Join to Yap
+                  <small class="showcase__channel-desc">Members join here to spawn a temporary room.</small>
+                </div>
+                <div class="showcase__channel showcase__channel--created">
+                  🔊 Diese's Yap
+                  <small class="showcase__channel-desc">Created automatically. One active owned room per server.</small>
+                </div>
+                <div class="showcase__channel">
+                  🔊 Lower Div Join to Yap
+                  <small class="showcase__channel-desc">Optional category-specific lobby.</small>
+                </div>
+                <div class="showcase__channel showcase__channel--created">
+                  🔊 Ranked Review
+                  <small class="showcase__channel-desc">Deleted after the last member leaves.</small>
+                </div>
+              </div>
             </div>
           </aside>
         </section>
-        <section class="grid" aria-label="YapHub highlights"><article class="card"><h3>Join-to-create</h3><p class="muted">Members join a lobby. YapHub creates a room. No admin babysitting.</p></article><article class="card"><h3>Multi-server ready</h3><p class="muted">Invite YapHub to multiple Discord servers and configure each one independently.</p></article><article class="card"><h3>Self-cleaning</h3><p class="muted">Temporary rooms vanish after they empty, so your sidebar stays readable.</p></article></section>
-        <section id="setup" class="section two-col"><div class="card"><h2>Setup without the dev ritual.</h2><p class="muted">Invite YapHub, approve the requested permissions, then run one command in Discord. No cloning, no self-hosting, no token wrangling, no README archaeology.</p></div><div class="card steps"><div class="step"><div><h3>Add YapHub</h3><p class="muted">Use the Add to Discord button and approve the requested permissions.</p></div></div><div class="step"><div><h3>Run setup</h3><p class="muted">Use <strong>/yap setup</strong> and select where temporary rooms should be created.</p></div></div><div class="step"><div><h3>Join the lobby</h3><p class="muted">Members join the configured lobby and get moved into their temporary room.</p></div></div><div class="step"><div><h3>Let it clean up</h3><p class="muted">When the room empties, YapHub deletes it.</p></div></div></div></section>
-        <section class="section two-col"><div class="card"><h2>Built for Discord communities.</h2><p class="muted">Gaming servers, leagues, friend groups, creator communities — anywhere voice channels multiply like gremlins after midnight.</p></div><div class="card"><h2>Common commands</h2><div class="code">/yap setup category:#GENERAL VOICE</div><br /><div class="code">/yap config</div><br /><div class="code">/yap profile create name:"Lower Div Yaps" category:#SMITE-LOWER-DIV lobby_name:"Lower Div Join to Yap"</div></div></section>
-        <section id="permissions" class="section two-col"><div class="card"><h2>Permissions, not admin keys.</h2><p class="muted">YapHub asks for voice and channel-management permissions so it can create temporary rooms, move members, and remove rooms later. It should not need full Administrator access.</p></div><div class="card"><div class="permissions"><span class="permission">Manage Channels</span><span class="permission">Move Members</span><span class="permission">View Channels</span><span class="permission">Connect</span><span class="permission">Speak</span><span class="permission">Send Messages</span><span class="permission">Read Message History</span><span class="permission">Slash Commands</span></div></div></section>
-        <section class="section card final"><h2>Built narrow on purpose.</h2><p class="muted">YapHub is not trying to be a mega-bot. It focuses on temporary voice channels, category-scoped join lobbies, and keeping Discord servers from turning into permanent voice-channel soup.</p><div class="actions"><a class="button primary" href="https://discord.com/oauth2/authorize?client_id=1503456577666154506&permissions=277311728656&integration_type=0&scope=applications.commands+bot">Add YapHub to Discord</a></div></section>
+
+        <section class="features" aria-label="YapHub highlights">
+          <article class="card">
+            <h3 class="card__title">Join-to-create</h3>
+            <p class="card__text u-muted">Members join a lobby. YapHub creates a room. No admin babysitting.</p>
+          </article>
+          <article class="card card--accent-a">
+            <h3 class="card__title">Multi-server ready</h3>
+            <p class="card__text u-muted">Invite YapHub to multiple Discord servers and configure each one independently.</p>
+          </article>
+          <article class="card card--accent-b">
+            <h3 class="card__title">Self-cleaning</h3>
+            <p class="card__text u-muted">Temporary rooms vanish after they empty, so your sidebar stays readable.</p>
+          </article>
+        </section>
+
+        <section id="setup" class="page-section page-section--split">
+          <div class="card">
+            <h2 class="card__heading">Setup without the dev ritual.</h2>
+            <p class="card__text u-muted">Invite YapHub, approve the requested permissions, then run one command in Discord. No cloning, no self-hosting, no token wrangling, no README archaeology.</p>
+          </div>
+          <div class="card steps">
+            <div class="steps__item">
+              <div>
+                <h3 class="steps__title">Add YapHub</h3>
+                <p class="card__text u-muted">Use the Add to Discord button and approve the requested permissions.</p>
+              </div>
+            </div>
+            <div class="steps__item">
+              <div>
+                <h3 class="steps__title">Run setup</h3>
+                <p class="card__text u-muted">Use <strong>/yap setup</strong> and select where temporary rooms should be created.</p>
+              </div>
+            </div>
+            <div class="steps__item">
+              <div>
+                <h3 class="steps__title">Join the lobby</h3>
+                <p class="card__text u-muted">Members join the configured lobby and get moved into their temporary room.</p>
+              </div>
+            </div>
+            <div class="steps__item">
+              <div>
+                <h3 class="steps__title">Let it clean up</h3>
+                <p class="card__text u-muted">When the room empties, YapHub deletes it.</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="page-section page-section--split">
+          <div class="card">
+            <h2 class="card__heading">Built for Discord communities.</h2>
+            <p class="card__text u-muted">Gaming servers, leagues, friend groups, creator communities — anywhere voice channels multiply like gremlins after midnight.</p>
+          </div>
+          <div class="card">
+            <h2 class="card__heading">Common commands</h2>
+            <div class="code-sample">/yap setup category:#GENERAL VOICE</div>
+            <br />
+            <div class="code-sample">/yap config</div>
+            <br />
+            <div class="code-sample">/yap profile create name:"Lower Div Yaps" category:#SMITE-LOWER-DIV lobby_name:"Lower Div Join to Yap"</div>
+          </div>
+        </section>
+
+        <section id="permissions" class="page-section page-section--split">
+          <div class="card">
+            <h2 class="card__heading">Permissions, not admin keys.</h2>
+            <p class="card__text u-muted">YapHub asks for voice and channel-management permissions so it can create temporary rooms, move members, and remove rooms later. It should not need full Administrator access.</p>
+          </div>
+          <div class="card">
+            <div class="permissions">
+              <span class="permissions__item">Manage Channels</span>
+              <span class="permissions__item">Move Members</span>
+              <span class="permissions__item">View Channels</span>
+              <span class="permissions__item">Connect</span>
+              <span class="permissions__item">Speak</span>
+              <span class="permissions__item">Send Messages</span>
+              <span class="permissions__item">Read Message History</span>
+              <span class="permissions__item">Slash Commands</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="page-section card card--cta">
+          <h2 class="card__heading">Built narrow on purpose.</h2>
+          <p class="card__text u-muted">YapHub is not trying to be a mega-bot. It focuses on temporary voice channels, category-scoped join lobbies, and keeping Discord servers from turning into permanent voice-channel soup.</p>
+          <div class="button-row">
+            <a class="button button--primary" href="https://discord.com/oauth2/authorize?client_id=1503456577666154506&permissions=277311728656&integration_type=0&scope=applications.commands+bot">Add YapHub to Discord</a>
+          </div>
+        </section>
       </main>
-      <footer><span>YapHub by Diese Tech</span><span>Temporary voice channels for cleaner Discord communities.</span></footer>
+      <footer class="site-footer">
+        <span class="site-footer__item">YapHub by Diese Tech</span>
+        <span class="site-footer__item">Temporary voice channels for cleaner Discord communities.</span>
+      </footer>
     </div>
     <script>
       fetch('./stats.json', { cache: 'no-store' })
