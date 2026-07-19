@@ -104,6 +104,10 @@ async def apply_transfer(
         ephemeral=True,
     )
 
+    from services.panel import refresh_panel_message
+
+    await refresh_panel_message(bot, channel, user)
+
 
 async def permitted_members(bot, guild: discord.Guild, channel_id: int) -> tuple[discord.Member, ...]:
     rows = await bot.storage.list_permits(channel_id)
@@ -331,3 +335,7 @@ async def apply_claim(bot, interaction: discord.Interaction, channel: discord.Vo
         f"You are now the owner of {channel.mention}.",
         ephemeral=True,
     )
+
+    from services.panel import refresh_panel_message
+
+    await refresh_panel_message(bot, channel, interaction.user)

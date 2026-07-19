@@ -30,6 +30,7 @@ create table if not exists active_temp_channels (
   guild_id text not null,
   profile_id text not null,
   owner_user_id text not null,
+  panel_message_id text,
   created_at text not null,
   last_seen_at text not null
 );
