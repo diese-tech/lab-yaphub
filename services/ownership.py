@@ -20,6 +20,10 @@ def user_is_recorded_owner(record, user_id: int) -> bool:
     return record is not None and int(record["owner_user_id"]) == user_id
 
 
+def _actor_is_present(interaction: discord.Interaction, channel: discord.VoiceChannel) -> bool:
+    return isinstance(interaction.user, discord.Member) and interaction.user in channel.members
+
+
 async def _authorize_channel(
     interaction: discord.Interaction,
     storage: TempChannelStorage,
@@ -33,11 +37,22 @@ async def _authorize_channel(
         )
         return False
 
-    if not user_is_recorded_owner(record, interaction.user.id) and not has_manage_channels(
-        interaction
-    ):
+    if user_is_recorded_owner(record, interaction.user.id):
+        return True
+
+    if not has_manage_channels(interaction):
         await interaction.response.send_message(
             "Only the room owner or a Manage Channels admin can do that.",
+            ephemeral=True,
+        )
+        return False
+
+    # Admin override still requires actually joining the room -- an admin
+    # elsewhere in the server should not be able to silently take over or
+    # modify a room they were never part of.
+    if not _actor_is_present(interaction, channel):
+        await interaction.response.send_message(
+            "You must be connected to this voice channel to manage it as an admin.",
             ephemeral=True,
         )
         return False

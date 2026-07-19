@@ -220,17 +220,17 @@ class RoomControlPanel(ui.View):
 
     @ui.button(label="Rename", emoji="✏️", style=discord.ButtonStyle.secondary, custom_id="yaphub_panel:rename", row=1)
     async def rename_button(self, interaction: discord.Interaction, button: ui.Button) -> None:
-        if not isinstance(interaction.channel, discord.VoiceChannel):
-            await interaction.response.send_message(NOT_IN_ROOM_MESSAGE, ephemeral=True)
+        channel = await self._resolve(interaction)
+        if channel is None:
             return
-        await interaction.response.send_modal(RenameModal(interaction.channel.id))
+        await interaction.response.send_modal(RenameModal(channel.id))
 
     @ui.button(label="Limit", emoji="\U0001f522", style=discord.ButtonStyle.secondary, custom_id="yaphub_panel:limit", row=1)
     async def limit_button(self, interaction: discord.Interaction, button: ui.Button) -> None:
-        if not isinstance(interaction.channel, discord.VoiceChannel):
-            await interaction.response.send_message(NOT_IN_ROOM_MESSAGE, ephemeral=True)
+        channel = await self._resolve(interaction)
+        if channel is None:
             return
-        await interaction.response.send_modal(LimitModal(interaction.channel.id))
+        await interaction.response.send_modal(LimitModal(channel.id))
 
     @ui.button(label="Transfer", emoji="\U0001f451", style=discord.ButtonStyle.secondary, custom_id="yaphub_panel:transfer", row=1)
     async def transfer_button(self, interaction: discord.Interaction, button: ui.Button) -> None:
@@ -267,8 +267,25 @@ class RoomControlPanel(ui.View):
         )
 
 
-async def send_room_panel(channel: discord.VoiceChannel, owner: discord.Member) -> None:
+async def send_room_panel(
+    channel: discord.VoiceChannel, owner: discord.Member
+) -> discord.Message | None:
     try:
-        await channel.send(embed=build_panel_embed(owner), view=RoomControlPanel())
+        return await channel.send(embed=build_panel_embed(owner), view=RoomControlPanel())
     except (discord.Forbidden, discord.HTTPException):
         logger.exception("Failed to post control panel in channel %s", channel.id)
+        return None
+
+
+async def refresh_panel_message(bot, channel: discord.VoiceChannel, owner: discord.Member) -> None:
+    """Best-effort: re-render the panel embed (e.g. after an ownership
+    change) so it doesn't go stale. Never raises -- a missing/deleted
+    message or permission issue must not break the caller's response."""
+    record = await bot.storage.get_active_temp_channel(channel.id)
+    if record is None or record["panel_message_id"] is None:
+        return
+    try:
+        message = await channel.fetch_message(int(record["panel_message_id"]))
+        await message.edit(embed=build_panel_embed(owner))
+    except (discord.NotFound, discord.Forbidden, discord.HTTPException, ValueError):
+        logger.exception("Failed to refresh panel message for channel %s", channel.id)

@@ -202,7 +202,9 @@ async def _create_temp_room_locked(
         bot.active_temp_channel_ids.discard(temp_channel.id)
         return
 
-    await send_room_panel(temp_channel, member)
+    panel_message = await send_room_panel(temp_channel, member)
+    if panel_message is not None:
+        await bot.storage.set_panel_message_id(temp_channel.id, panel_message.id)
 
 
 async def cleanup_temp_channel(

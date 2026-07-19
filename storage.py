@@ -55,6 +55,15 @@ class Storage:
                 "alter table temp_vc_profiles add column temp_name_template text"
             )
 
+        active_columns = {
+            row["name"]
+            for row in connection.execute("pragma table_info(active_temp_channels)")
+        }
+        if "panel_message_id" not in active_columns:
+            connection.execute(
+                "alter table active_temp_channels add column panel_message_id text"
+            )
+
     async def get_or_create_guild_config(self, guild_id: int) -> sqlite3.Row:
         return await asyncio.to_thread(self._get_or_create_guild_config, guild_id)
 
@@ -423,4 +432,18 @@ class Storage:
                 where channel_id = ?
                 """,
                 (utc_now_iso(), str(channel_id)),
+            )
+
+    async def set_panel_message_id(self, channel_id: int, message_id: int) -> None:
+        await asyncio.to_thread(self._set_panel_message_id, channel_id, message_id)
+
+    def _set_panel_message_id(self, channel_id: int, message_id: int) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                update active_temp_channels
+                set panel_message_id = ?
+                where channel_id = ?
+                """,
+                (str(message_id), str(channel_id)),
             )
