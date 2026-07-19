@@ -86,7 +86,7 @@ class RenameModal(ui.Modal, title="Rename your Yap room"):
         channel = await resolve_owned_temp_channel_by_id(interaction, bot.storage, self.channel_id)
         if channel is None:
             return
-        await apply_rename(interaction, channel, self.name.value.strip())
+        await apply_rename(bot, interaction, channel, self.name.value.strip())
 
 
 class LimitModal(ui.Modal, title="Set Yap room limit"):
@@ -109,7 +109,7 @@ class LimitModal(ui.Modal, title="Set Yap room limit"):
         channel = await resolve_owned_temp_channel_by_id(interaction, bot.storage, self.channel_id)
         if channel is None:
             return
-        await apply_limit(interaction, channel, int(raw))
+        await apply_limit(bot, interaction, channel, int(raw))
 
 
 class TransferSelect(ui.UserSelect):

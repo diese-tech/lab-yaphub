@@ -23,14 +23,14 @@ async def rename_temp_channel(bot, interaction: discord.Interaction, name: str) 
     channel = await resolve_owned_temp_channel(interaction, bot.storage)
     if channel is None:
         return
-    await apply_rename(interaction, channel, name)
+    await apply_rename(bot, interaction, channel, name)
 
 
 async def limit_temp_channel(bot, interaction: discord.Interaction, count: int) -> None:
     channel = await resolve_owned_temp_channel(interaction, bot.storage)
     if channel is None:
         return
-    await apply_limit(interaction, channel, count)
+    await apply_limit(bot, interaction, channel, count)
 
 
 async def transfer_temp_channel(

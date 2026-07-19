@@ -3,6 +3,7 @@ import time
 
 import discord
 
+from services.ownership import log_admin_action
 from services.permissions import (
     deny_member_access,
     grant_member_access,
@@ -43,7 +44,9 @@ def clear_rename_history(channel_id: int) -> None:
     _rename_history.pop(channel_id, None)
 
 
-async def apply_rename(interaction: discord.Interaction, channel: discord.VoiceChannel, name: str) -> None:
+async def apply_rename(
+    bot, interaction: discord.Interaction, channel: discord.VoiceChannel, name: str
+) -> None:
     retry_after = _rename_retry_after(channel.id)
     if retry_after is not None:
         await interaction.response.send_message(
@@ -60,14 +63,20 @@ async def apply_rename(interaction: discord.Interaction, channel: discord.VoiceC
         ephemeral=True,
     )
 
+    await log_admin_action(bot, interaction, channel)
 
-async def apply_limit(interaction: discord.Interaction, channel: discord.VoiceChannel, count: int) -> None:
+
+async def apply_limit(
+    bot, interaction: discord.Interaction, channel: discord.VoiceChannel, count: int
+) -> None:
     await channel.edit(user_limit=count, reason=f"YapHub limit by user {interaction.user.id}")
     label = "unlimited" if count == 0 else str(count)
     await interaction.response.send_message(
         f"Set your Yap room limit to `{label}`.",
         ephemeral=True,
     )
+
+    await log_admin_action(bot, interaction, channel)
 
 
 async def apply_transfer(
@@ -99,6 +108,12 @@ async def apply_transfer(
         )
         return
 
+    # Captured before the mutation: log_admin_action needs the *pre-transfer*
+    # owner to tell an admin override from an ordinary owner-initiated
+    # transfer -- after the write below, the DB owner is always the
+    # recipient, which would misfire on every normal transfer.
+    pre_transfer_record = await bot.storage.get_active_temp_channel(channel.id)
+
     await bot.storage.transfer_active_temp_channel_owner(channel.id, user.id)
     await interaction.response.send_message(
         f"Transferred ownership of {channel.mention} to {user.mention}.",
@@ -108,6 +123,7 @@ async def apply_transfer(
     from services.panel import refresh_panel_message
 
     await refresh_panel_message(bot, channel)
+    await log_admin_action(bot, interaction, channel, record=pre_transfer_record)
 
 
 async def permitted_members(bot, guild: discord.Guild, channel_id: int) -> tuple[discord.Member, ...]:
@@ -150,6 +166,7 @@ async def apply_lock(bot, interaction: discord.Interaction, channel: discord.Voi
     from services.panel import refresh_panel_message
 
     await refresh_panel_message(bot, channel)
+    await log_admin_action(bot, interaction, channel)
 
 
 async def apply_unlock(bot, interaction: discord.Interaction, channel: discord.VoiceChannel) -> None:
@@ -162,6 +179,7 @@ async def apply_unlock(bot, interaction: discord.Interaction, channel: discord.V
     from services.panel import refresh_panel_message
 
     await refresh_panel_message(bot, channel)
+    await log_admin_action(bot, interaction, channel)
 
 
 async def apply_hide(bot, interaction: discord.Interaction, channel: discord.VoiceChannel) -> None:
@@ -184,6 +202,7 @@ async def apply_hide(bot, interaction: discord.Interaction, channel: discord.Voi
     from services.panel import refresh_panel_message
 
     await refresh_panel_message(bot, channel)
+    await log_admin_action(bot, interaction, channel)
 
 
 async def apply_unhide(bot, interaction: discord.Interaction, channel: discord.VoiceChannel) -> None:
@@ -196,6 +215,7 @@ async def apply_unhide(bot, interaction: discord.Interaction, channel: discord.V
     from services.panel import refresh_panel_message
 
     await refresh_panel_message(bot, channel)
+    await log_admin_action(bot, interaction, channel)
 
 
 def build_room_info_embed(
@@ -287,6 +307,8 @@ async def apply_kick(
         ephemeral=True,
     )
 
+    await log_admin_action(bot, interaction, channel)
+
 
 async def apply_permit(
     bot,
@@ -317,6 +339,7 @@ async def apply_permit(
     from services.panel import refresh_panel_message
 
     await refresh_panel_message(bot, channel)
+    await log_admin_action(bot, interaction, channel)
 
 
 async def apply_unpermit(
@@ -338,6 +361,7 @@ async def apply_unpermit(
     from services.panel import refresh_panel_message
 
     await refresh_panel_message(bot, channel)
+    await log_admin_action(bot, interaction, channel)
 
 
 async def apply_block(
@@ -389,6 +413,8 @@ async def apply_block(
         ephemeral=True,
     )
 
+    await log_admin_action(bot, interaction, channel)
+
 
 async def apply_unblock(
     bot,
@@ -405,6 +431,8 @@ async def apply_unblock(
         "subject to its current lock/hide state.",
         ephemeral=True,
     )
+
+    await log_admin_action(bot, interaction, channel)
 
 
 async def apply_claim(bot, interaction: discord.Interaction, channel: discord.VoiceChannel) -> None:

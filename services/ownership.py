@@ -55,8 +55,36 @@ async def _authorize_channel(
         )
         return False
 
-    await _log_admin_override(interaction, storage, channel, record)
     return True
+
+
+async def log_admin_action(
+    bot,
+    interaction: discord.Interaction,
+    channel: discord.VoiceChannel,
+    record=None,
+) -> None:
+    """Call after a mutating room action has actually succeeded, not at
+    authorization time -- several panel actions authorize twice for one
+    logical action (once opening a modal/select, again on submit), and an
+    admin who cancels or picks an invalid target never touches the room at
+    all, so logging any earlier than this produces duplicate or phantom
+    audit entries. Only logs when the actor isn't the room's owner; a
+    non-owner actor reaching this point already passed _authorize_channel,
+    so they can only be a present Manage Channels admin.
+
+    Pass `record` explicitly for actions that change the room's owner
+    (transfer) -- fetching fresh here would compare the actor against the
+    *new* owner and misfire on an ordinary owner-initiated transfer."""
+    if interaction.guild is None:
+        return
+
+    if record is None:
+        record = await bot.storage.get_active_temp_channel(channel.id)
+    if record is None or user_is_recorded_owner(record, interaction.user.id):
+        return
+
+    await _log_admin_override(interaction, bot.storage, channel, record)
 
 
 async def _log_admin_override(
