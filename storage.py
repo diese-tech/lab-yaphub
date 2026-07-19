@@ -64,6 +64,15 @@ class Storage:
                 "alter table active_temp_channels add column panel_message_id text"
             )
 
+        guild_config_columns = {
+            row["name"]
+            for row in connection.execute("pragma table_info(guild_configs)")
+        }
+        if "mod_log_channel_id" not in guild_config_columns:
+            connection.execute(
+                "alter table guild_configs add column mod_log_channel_id text"
+            )
+
     async def get_or_create_guild_config(self, guild_id: int) -> sqlite3.Row:
         return await asyncio.to_thread(self._get_or_create_guild_config, guild_id)
 
@@ -104,6 +113,21 @@ class Storage:
                 "select * from guild_configs where guild_id = ?",
                 (str(guild_id),),
             ).fetchone()
+
+    async def set_mod_log_channel(self, guild_id: int, channel_id: int | None) -> None:
+        await asyncio.to_thread(self._set_mod_log_channel, guild_id, channel_id)
+
+    def _set_mod_log_channel(self, guild_id: int, channel_id: int | None) -> None:
+        self._get_or_create_guild_config(guild_id)
+        with self._connect() as connection:
+            connection.execute(
+                """
+                update guild_configs
+                set mod_log_channel_id = ?, updated_at = ?
+                where guild_id = ?
+                """,
+                (str(channel_id) if channel_id else None, utc_now_iso(), str(guild_id)),
+            )
 
     async def reset_guild_configuration(self, guild_id: int) -> None:
         await asyncio.to_thread(self._reset_guild_configuration, guild_id)
@@ -382,6 +406,10 @@ class Storage:
                 "delete from temp_channel_permits where channel_id = ?",
                 (str(channel_id),),
             )
+            connection.execute(
+                "delete from temp_channel_blocks where channel_id = ?",
+                (str(channel_id),),
+            )
 
     async def add_permit(self, channel_id: int, user_id: int) -> None:
         await asyncio.to_thread(self._add_permit, channel_id, user_id)
@@ -414,6 +442,43 @@ class Storage:
             return connection.execute(
                 """
                 select * from temp_channel_permits
+                where channel_id = ?
+                order by created_at asc
+                """,
+                (str(channel_id),),
+            ).fetchall()
+
+    async def add_block(self, channel_id: int, user_id: int) -> None:
+        await asyncio.to_thread(self._add_block, channel_id, user_id)
+
+    def _add_block(self, channel_id: int, user_id: int) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                insert or ignore into temp_channel_blocks (channel_id, user_id, created_at)
+                values (?, ?, ?)
+                """,
+                (str(channel_id), str(user_id), utc_now_iso()),
+            )
+
+    async def remove_block(self, channel_id: int, user_id: int) -> None:
+        await asyncio.to_thread(self._remove_block, channel_id, user_id)
+
+    def _remove_block(self, channel_id: int, user_id: int) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                "delete from temp_channel_blocks where channel_id = ? and user_id = ?",
+                (str(channel_id), str(user_id)),
+            )
+
+    async def list_blocks(self, channel_id: int) -> Sequence[sqlite3.Row]:
+        return await asyncio.to_thread(self._list_blocks, channel_id)
+
+    def _list_blocks(self, channel_id: int) -> Sequence[sqlite3.Row]:
+        with self._connect() as connection:
+            return connection.execute(
+                """
+                select * from temp_channel_blocks
                 where channel_id = ?
                 order by created_at asc
                 """,

@@ -4,6 +4,7 @@ import time
 import discord
 
 from services.permissions import (
+    deny_member_access,
     grant_member_access,
     hide_temp_channel,
     is_hidden,
@@ -106,11 +107,21 @@ async def apply_transfer(
 
     from services.panel import refresh_panel_message
 
-    await refresh_panel_message(bot, channel, user)
+    await refresh_panel_message(bot, channel)
 
 
 async def permitted_members(bot, guild: discord.Guild, channel_id: int) -> tuple[discord.Member, ...]:
     rows = await bot.storage.list_permits(channel_id)
+    members = []
+    for row in rows:
+        member = guild.get_member(int(row["user_id"]))
+        if member is not None:
+            members.append(member)
+    return tuple(members)
+
+
+async def blocked_members(bot, guild: discord.Guild, channel_id: int) -> tuple[discord.Member, ...]:
+    rows = await bot.storage.list_blocks(channel_id)
     members = []
     for row in rows:
         member = guild.get_member(int(row["user_id"]))
@@ -136,13 +147,21 @@ async def apply_lock(bot, interaction: discord.Interaction, channel: discord.Voi
         ephemeral=True,
     )
 
+    from services.panel import refresh_panel_message
 
-async def apply_unlock(interaction: discord.Interaction, channel: discord.VoiceChannel) -> None:
+    await refresh_panel_message(bot, channel)
+
+
+async def apply_unlock(bot, interaction: discord.Interaction, channel: discord.VoiceChannel) -> None:
     await unlock_temp_channel(channel, reason=f"YapHub unlock by user {interaction.user.id}")
     await interaction.response.send_message(
         "Unlocked your Yap room.",
         ephemeral=True,
     )
+
+    from services.panel import refresh_panel_message
+
+    await refresh_panel_message(bot, channel)
 
 
 async def apply_hide(bot, interaction: discord.Interaction, channel: discord.VoiceChannel) -> None:
@@ -162,13 +181,21 @@ async def apply_hide(bot, interaction: discord.Interaction, channel: discord.Voi
         ephemeral=True,
     )
 
+    from services.panel import refresh_panel_message
 
-async def apply_unhide(interaction: discord.Interaction, channel: discord.VoiceChannel) -> None:
+    await refresh_panel_message(bot, channel)
+
+
+async def apply_unhide(bot, interaction: discord.Interaction, channel: discord.VoiceChannel) -> None:
     await unhide_temp_channel(channel, reason=f"YapHub unhide by user {interaction.user.id}")
     await interaction.response.send_message(
         "Your Yap room is visible again.",
         ephemeral=True,
     )
+
+    from services.panel import refresh_panel_message
+
+    await refresh_panel_message(bot, channel)
 
 
 def build_room_info_embed(
@@ -176,6 +203,7 @@ def build_room_info_embed(
     record,
     guild: discord.Guild,
     permitted: tuple[discord.Member, ...] = (),
+    blocked: tuple[discord.Member, ...] = (),
 ) -> discord.Embed:
     owner = guild.get_member(int(record["owner_user_id"]))
     states = []
@@ -205,6 +233,11 @@ def build_room_info_embed(
         if len(permitted) > 15:
             shown += f" +{len(permitted) - 15} more"
         embed.add_field(name="Permitted", value=shown, inline=False)
+    if blocked:
+        shown_blocked = ", ".join(member.mention for member in blocked[:15])
+        if len(blocked) > 15:
+            shown_blocked += f" +{len(blocked) - 15} more"
+        embed.add_field(name="Blocked", value=shown_blocked, inline=False)
     embed.set_footer(text="YapHub")
     return embed
 
@@ -268,6 +301,9 @@ async def apply_permit(
         )
         return
 
+    # Permitting is the opposite of blocking -- clear any existing block so
+    # the two lists can't contradict each other for the same member.
+    await bot.storage.remove_block(channel.id, member.id)
     await bot.storage.add_permit(channel.id, member.id)
     await grant_member_access(
         channel, member, reason=f"YapHub permit by user {interaction.user.id}"
@@ -277,6 +313,10 @@ async def apply_permit(
         "it is hidden or locked, and keep access if they leave.",
         ephemeral=True,
     )
+
+    from services.panel import refresh_panel_message
+
+    await refresh_panel_message(bot, channel)
 
 
 async def apply_unpermit(
@@ -292,6 +332,77 @@ async def apply_unpermit(
     await interaction.response.send_message(
         f"Removed {member.mention}'s permit. If they are in the room they can stay, "
         "but they lose re-entry to it while it is hidden or locked.",
+        ephemeral=True,
+    )
+
+    from services.panel import refresh_panel_message
+
+    await refresh_panel_message(bot, channel)
+
+
+async def apply_block(
+    bot,
+    interaction: discord.Interaction,
+    channel: discord.VoiceChannel,
+    member: discord.Member,
+) -> None:
+    if member.id == interaction.user.id:
+        await interaction.response.send_message(
+            "You can't block yourself from your own room.",
+            ephemeral=True,
+        )
+        return
+
+    if member.bot:
+        await interaction.response.send_message(
+            "Bots can't be blocked.",
+            ephemeral=True,
+        )
+        return
+
+    try:
+        await deny_member_access(
+            channel, member, reason=f"YapHub block by user {interaction.user.id}"
+        )
+    except (discord.Forbidden, discord.HTTPException):
+        logger.exception("Failed to apply block overwrite for %s in channel %s", member.id, channel.id)
+        await interaction.response.send_message(
+            "I couldn't block that member. Check my Manage Channels permission.",
+            ephemeral=True,
+        )
+        return
+
+    # Blocking is the opposite of permitting -- clear any existing permit.
+    await bot.storage.remove_permit(channel.id, member.id)
+    await bot.storage.add_block(channel.id, member.id)
+
+    if member in channel.members:
+        try:
+            await member.move_to(None, reason=f"YapHub block by user {interaction.user.id}")
+        except (discord.Forbidden, discord.HTTPException):
+            logger.exception(
+                "Failed to disconnect blocked member %s from channel %s", member.id, channel.id
+            )
+
+    await interaction.response.send_message(
+        f"Blocked {member.mention} from this room. They can't see or join it until unblocked.",
+        ephemeral=True,
+    )
+
+
+async def apply_unblock(
+    bot,
+    interaction: discord.Interaction,
+    channel: discord.VoiceChannel,
+    member: discord.Member,
+) -> None:
+    await bot.storage.remove_block(channel.id, member.id)
+    await revoke_member_overwrites(
+        channel, member, reason=f"YapHub unblock by user {interaction.user.id}"
+    )
+    await interaction.response.send_message(
+        f"Unblocked {member.mention}. They can see and join this room again, "
+        "subject to its current lock/hide state.",
         ephemeral=True,
     )
 
@@ -338,4 +449,4 @@ async def apply_claim(bot, interaction: discord.Interaction, channel: discord.Vo
 
     from services.panel import refresh_panel_message
 
-    await refresh_panel_message(bot, channel, interaction.user)
+    await refresh_panel_message(bot, channel)

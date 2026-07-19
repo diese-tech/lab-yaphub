@@ -8,8 +8,8 @@ from config import DEFAULT_TEMP_CHANNEL_PREFIX
 from services.notifications import notify_duplicate_room
 from services.ownership import active_channel_ids
 from services.panel import send_room_panel
-from services.permissions import revoke_member_overwrites
-from services.room_actions import clear_rename_history
+from services.permissions import is_hidden, is_locked, revoke_member_overwrites
+from services.room_actions import clear_rename_history, permitted_members
 
 logger = logging.getLogger("yaphub")
 
@@ -72,7 +72,13 @@ async def _backfill_panel_message(bot, guild: discord.Guild, channel: discord.Vo
     if owner is None:
         return
 
-    panel_message = await send_room_panel(channel, owner)
+    panel_message = await send_room_panel(
+        channel,
+        owner,
+        locked=is_locked(channel),
+        hidden=is_hidden(channel),
+        permitted=await permitted_members(bot, guild, channel.id),
+    )
     if panel_message is not None:
         await bot.storage.set_panel_message_id(channel.id, panel_message.id)
 

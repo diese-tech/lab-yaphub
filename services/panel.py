@@ -4,7 +4,9 @@ import discord
 from discord import ui
 
 from services.ownership import resolve_owned_temp_channel_by_id
+from services.permissions import is_hidden, is_locked
 from services.room_actions import (
+    apply_block,
     apply_claim,
     apply_hide,
     apply_kick,
@@ -13,8 +15,11 @@ from services.room_actions import (
     apply_permit,
     apply_rename,
     apply_transfer,
+    apply_unblock,
     apply_unhide,
     apply_unlock,
+    apply_unpermit,
+    permitted_members,
 )
 
 logger = logging.getLogger("yaphub")
@@ -23,7 +28,13 @@ PANEL_EMBED_COLOR = 0x23D8FF
 NOT_IN_ROOM_MESSAGE = "This panel only works inside its own Yap room."
 
 
-def build_panel_embed(owner: discord.Member) -> discord.Embed:
+def build_panel_embed(
+    owner: discord.Member,
+    *,
+    locked: bool = False,
+    hidden: bool = False,
+    permitted: tuple[discord.Member, ...] = (),
+) -> discord.Embed:
     embed = discord.Embed(
         title="Yap Room Controls",
         description=(
@@ -32,6 +43,20 @@ def build_panel_embed(owner: discord.Member) -> discord.Embed:
         ),
         color=PANEL_EMBED_COLOR,
     )
+    embed.add_field(
+        name="State",
+        value=(
+            ("\U0001f512 Locked" if locked else "\U0001f513 Unlocked")
+            + " / "
+            + ("\U0001f648 Hidden" if hidden else "\U0001f441 Visible")
+        ),
+        inline=True,
+    )
+    if permitted:
+        shown = ", ".join(member.mention for member in permitted[:10])
+        if len(permitted) > 10:
+            shown += f" +{len(permitted) - 10} more"
+        embed.add_field(name="Permitted", value=shown, inline=True)
     embed.add_field(name="\U0001f512 Lock / \U0001f513 Unlock", value="Control who can join.", inline=True)
     embed.add_field(name="\U0001f648 Hide / \U0001f441 Unhide", value="Control who can see it.", inline=True)
     embed.add_field(name="✏️ Rename / \U0001f522 Limit", value="Customize your room.", inline=True)
@@ -41,8 +66,8 @@ def build_panel_embed(owner: discord.Member) -> discord.Embed:
         inline=True,
     )
     embed.add_field(
-        name="\U0001f39f Permit",
-        value="Give someone standing access even while hidden/locked.",
+        name="\U0001f39f Permit / \U0001f6ab Block",
+        value="Give or deny standing access.",
         inline=True,
     )
     embed.set_footer(text="YapHub")
@@ -162,6 +187,30 @@ class PermitView(ui.View):
         self.add_item(PermitSelect(channel_id))
 
 
+class BlockSelect(ui.UserSelect):
+    def __init__(self, channel_id: int) -> None:
+        super().__init__(placeholder="Choose a member to block", min_values=1, max_values=1)
+        self.channel_id = channel_id
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        bot = interaction.client
+        channel = await resolve_owned_temp_channel_by_id(interaction, bot.storage, self.channel_id)
+        if channel is None:
+            return
+
+        target = self.values[0]
+        if not isinstance(target, discord.Member):
+            await interaction.response.send_message("Pick a server member.", ephemeral=True)
+            return
+        await apply_block(bot, interaction, channel, target)
+
+
+class BlockView(ui.View):
+    def __init__(self, channel_id: int) -> None:
+        super().__init__(timeout=60)
+        self.add_item(BlockSelect(channel_id))
+
+
 class RoomControlPanel(ui.View):
     """Persistent control panel posted into each temp room's text chat.
 
@@ -190,10 +239,11 @@ class RoomControlPanel(ui.View):
 
     @ui.button(label="Unlock", emoji="\U0001f513", style=discord.ButtonStyle.secondary, custom_id="yaphub_panel:unlock", row=0)
     async def unlock_button(self, interaction: discord.Interaction, button: ui.Button) -> None:
+        bot = interaction.client
         channel = await self._resolve(interaction)
         if channel is None:
             return
-        await apply_unlock(interaction, channel)
+        await apply_unlock(bot, interaction, channel)
 
     @ui.button(label="Hide", emoji="\U0001f648", style=discord.ButtonStyle.secondary, custom_id="yaphub_panel:hide", row=0)
     async def hide_button(self, interaction: discord.Interaction, button: ui.Button) -> None:
@@ -205,10 +255,11 @@ class RoomControlPanel(ui.View):
 
     @ui.button(label="Unhide", emoji="\U0001f441", style=discord.ButtonStyle.secondary, custom_id="yaphub_panel:unhide", row=0)
     async def unhide_button(self, interaction: discord.Interaction, button: ui.Button) -> None:
+        bot = interaction.client
         channel = await self._resolve(interaction)
         if channel is None:
             return
-        await apply_unhide(interaction, channel)
+        await apply_unhide(bot, interaction, channel)
 
     @ui.button(label="Claim", emoji="\U0001f64b", style=discord.ButtonStyle.primary, custom_id="yaphub_panel:claim", row=0)
     async def claim_button(self, interaction: discord.Interaction, button: ui.Button) -> None:
@@ -266,26 +317,57 @@ class RoomControlPanel(ui.View):
             ephemeral=True,
         )
 
+    @ui.button(label="Block", emoji="\U0001f6ab", style=discord.ButtonStyle.danger, custom_id="yaphub_panel:block", row=2)
+    async def block_button(self, interaction: discord.Interaction, button: ui.Button) -> None:
+        channel = await self._resolve(interaction)
+        if channel is None:
+            return
+        await interaction.response.send_message(
+            "Choose who to block (they lose all access to this room until unblocked):",
+            view=BlockView(channel.id),
+            ephemeral=True,
+        )
+
 
 async def send_room_panel(
-    channel: discord.VoiceChannel, owner: discord.Member
+    channel: discord.VoiceChannel,
+    owner: discord.Member,
+    *,
+    locked: bool = False,
+    hidden: bool = False,
+    permitted: tuple[discord.Member, ...] = (),
 ) -> discord.Message | None:
     try:
-        return await channel.send(embed=build_panel_embed(owner), view=RoomControlPanel())
+        embed = build_panel_embed(owner, locked=locked, hidden=hidden, permitted=permitted)
+        return await channel.send(embed=embed, view=RoomControlPanel())
     except (discord.Forbidden, discord.HTTPException):
         logger.exception("Failed to post control panel in channel %s", channel.id)
         return None
 
 
-async def refresh_panel_message(bot, channel: discord.VoiceChannel, owner: discord.Member) -> None:
-    """Best-effort: re-render the panel embed (e.g. after an ownership
-    change) so it doesn't go stale. Never raises -- a missing/deleted
-    message or permission issue must not break the caller's response."""
+async def refresh_panel_message(bot, channel: discord.VoiceChannel) -> None:
+    """Best-effort: re-render the panel embed (owner, lock/hide state,
+    permit list) so it never goes stale after an action changes any of
+    them. Never raises -- a missing/deleted message or permission issue
+    must not break the caller's response. Owner and state are always
+    re-derived here rather than passed in, so every caller gets the
+    actual current state regardless of what triggered the refresh."""
     record = await bot.storage.get_active_temp_channel(channel.id)
     if record is None or record["panel_message_id"] is None:
         return
+
+    owner = channel.guild.get_member(int(record["owner_user_id"]))
+    if owner is None:
+        return
+
     try:
         message = await channel.fetch_message(int(record["panel_message_id"]))
-        await message.edit(embed=build_panel_embed(owner))
+        embed = build_panel_embed(
+            owner,
+            locked=is_locked(channel),
+            hidden=is_hidden(channel),
+            permitted=await permitted_members(bot, channel.guild, channel.id),
+        )
+        await message.edit(embed=embed)
     except (discord.NotFound, discord.Forbidden, discord.HTTPException, ValueError):
         logger.exception("Failed to refresh panel message for channel %s", channel.id)

@@ -5,6 +5,7 @@ import discord
 from discord import app_commands
 
 from commands.owner_controls import (
+    block_member,
     hide_owned_temp_channel,
     limit_temp_channel,
     lock_owned_temp_channel,
@@ -12,6 +13,7 @@ from commands.owner_controls import (
     rename_temp_channel,
     show_room_info,
     transfer_temp_channel,
+    unblock_member,
     unhide_owned_temp_channel,
     unlock_owned_temp_channel,
     unpermit_member,
@@ -123,7 +125,12 @@ class YapGroup(app_commands.Group):
                 "`/yap hide` / `/yap unhide` - Control who can see the room.\n"
                 "`/yap permit user:<member>` / `/yap unpermit user:<member>` - Manage standing access "
                 "that survives hide/lock and leaving.\n"
+                "`/yap block user:<member>` / `/yap unblock user:<member>` - Block someone from "
+                "seeing or joining your room.\n"
                 "`/yap room` - Show info about the room you are in.\n\n"
+                "**Moderation**\n"
+                "`/yap modlog channel:<channel>` - Log admin-override actions to a channel "
+                "(omit the channel to clear it).\n\n"
                 "`/yap profile create` is available for advanced/manual setups."
             ),
             ephemeral=True,
@@ -142,11 +149,16 @@ class YapGroup(app_commands.Group):
         profiles = await self.bot.storage.list_profiles(interaction.guild.id)
         active_rooms = await self.bot.storage.list_active_temp_channels(interaction.guild.id)
 
+        mod_log_channel = None
+        if guild_config["mod_log_channel_id"]:
+            mod_log_channel = interaction.guild.get_channel(int(guild_config["mod_log_channel_id"]))
+
         lines = [
             f"Temp prefix: `{guild_config['temp_channel_prefix']}`",
             f"Duplicate-room cooldown: `{guild_config['notification_cooldown_seconds']}s`",
             f"Profiles: `{len(profiles)}`",
             f"Active temp rooms: `{len(active_rooms)}`",
+            f"Admin-override log channel: {mod_log_channel.mention if mod_log_channel else 'Not set'}",
         ]
 
         if profiles:
@@ -289,3 +301,48 @@ class YapGroup(app_commands.Group):
     @app_commands.checks.cooldown(1, 5.0)
     async def unpermit(self, interaction: discord.Interaction, user: discord.Member) -> None:
         await unpermit_member(self.bot, interaction, user)
+
+    @app_commands.command(
+        name="block",
+        description="Block a member from seeing or joining your room, until unblocked",
+    )
+    @app_commands.checks.cooldown(1, 5.0)
+    async def block(self, interaction: discord.Interaction, user: discord.Member) -> None:
+        await block_member(self.bot, interaction, user)
+
+    @app_commands.command(name="unblock", description="Remove a member's block from your room")
+    @app_commands.checks.cooldown(1, 5.0)
+    async def unblock(self, interaction: discord.Interaction, user: discord.Member) -> None:
+        await unblock_member(self.bot, interaction, user)
+
+    @app_commands.command(
+        name="modlog",
+        description="Log admin-override room actions to a channel (omit to clear it)",
+    )
+    async def modlog(
+        self,
+        interaction: discord.Interaction,
+        channel: discord.TextChannel | None = None,
+    ) -> None:
+        if not require_manage_channels(interaction):
+            await interaction.response.send_message(
+                "You need Manage Channels permission.",
+                ephemeral=True,
+            )
+            return
+
+        assert interaction.guild is not None
+        await self.bot.storage.set_mod_log_channel(
+            interaction.guild.id, channel.id if channel else None
+        )
+
+        if channel is not None:
+            await interaction.response.send_message(
+                f"Admin-override actions on any room will now be logged to {channel.mention}.",
+                ephemeral=True,
+            )
+        else:
+            await interaction.response.send_message(
+                "Cleared the admin-override log channel. Overrides are still logged to the console.",
+                ephemeral=True,
+            )

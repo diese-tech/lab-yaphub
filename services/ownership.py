@@ -1,19 +1,17 @@
+import logging
 from collections.abc import Sequence
 from typing import Protocol
 
 import discord
 
+from services.permissions import require_manage_channels as has_manage_channels
+
+logger = logging.getLogger("yaphub")
+
 
 class TempChannelStorage(Protocol):
     async def get_active_temp_channel(self, channel_id: int): ...
-
-
-def has_manage_channels(interaction: discord.Interaction) -> bool:
-    return bool(
-        interaction.guild
-        and isinstance(interaction.user, discord.Member)
-        and interaction.user.guild_permissions.manage_channels
-    )
+    async def get_guild_config(self, guild_id: int): ...
 
 
 def user_is_recorded_owner(record, user_id: int) -> bool:
@@ -57,7 +55,50 @@ async def _authorize_channel(
         )
         return False
 
+    await _log_admin_override(interaction, storage, channel, record)
     return True
+
+
+async def _log_admin_override(
+    interaction: discord.Interaction,
+    storage: TempChannelStorage,
+    channel: discord.VoiceChannel,
+    record,
+) -> None:
+    admin = interaction.user
+    logger.info(
+        "Admin override: %s (%s) acted on room %s owned by %s in guild %s",
+        admin,
+        admin.id,
+        channel.id,
+        record["owner_user_id"],
+        interaction.guild.id,
+    )
+
+    guild_config = await storage.get_guild_config(interaction.guild.id)
+    log_channel_id = guild_config["mod_log_channel_id"] if guild_config else None
+    if not log_channel_id:
+        return
+
+    log_channel = interaction.guild.get_channel(int(log_channel_id))
+    if not isinstance(log_channel, discord.abc.Messageable):
+        return
+
+    embed = discord.Embed(
+        title="YapHub admin override",
+        description=(
+            f"{admin.mention} managed {channel.mention} without being its owner, "
+            "using their Manage Channels permission."
+        ),
+        color=0xFF3DF2,
+    )
+    embed.add_field(name="Room owner", value=f"<@{record['owner_user_id']}>", inline=True)
+    embed.set_footer(text="YapHub")
+
+    try:
+        await log_channel.send(embed=embed)
+    except (discord.Forbidden, discord.HTTPException):
+        logger.exception("Failed to post admin-override log to channel %s", log_channel_id)
 
 
 async def resolve_owned_temp_channel(
