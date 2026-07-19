@@ -1,19 +1,17 @@
+import logging
 from collections.abc import Sequence
 from typing import Protocol
 
 import discord
 
+from services.permissions import require_manage_channels as has_manage_channels
+
+logger = logging.getLogger("yaphub")
+
 
 class TempChannelStorage(Protocol):
     async def get_active_temp_channel(self, channel_id: int): ...
-
-
-def has_manage_channels(interaction: discord.Interaction) -> bool:
-    return bool(
-        interaction.guild
-        and isinstance(interaction.user, discord.Member)
-        and interaction.user.guild_permissions.manage_channels
-    )
+    async def get_guild_config(self, guild_id: int): ...
 
 
 def user_is_recorded_owner(record, user_id: int) -> bool:
@@ -58,6 +56,77 @@ async def _authorize_channel(
         return False
 
     return True
+
+
+async def log_admin_action(
+    bot,
+    interaction: discord.Interaction,
+    channel: discord.VoiceChannel,
+    record=None,
+) -> None:
+    """Call after a mutating room action has actually succeeded, not at
+    authorization time -- several panel actions authorize twice for one
+    logical action (once opening a modal/select, again on submit), and an
+    admin who cancels or picks an invalid target never touches the room at
+    all, so logging any earlier than this produces duplicate or phantom
+    audit entries. Only logs when the actor isn't the room's owner; a
+    non-owner actor reaching this point already passed _authorize_channel,
+    so they can only be a present Manage Channels admin.
+
+    Pass `record` explicitly for actions that change the room's owner
+    (transfer) -- fetching fresh here would compare the actor against the
+    *new* owner and misfire on an ordinary owner-initiated transfer."""
+    if interaction.guild is None:
+        return
+
+    if record is None:
+        record = await bot.storage.get_active_temp_channel(channel.id)
+    if record is None or user_is_recorded_owner(record, interaction.user.id):
+        return
+
+    await _log_admin_override(interaction, bot.storage, channel, record)
+
+
+async def _log_admin_override(
+    interaction: discord.Interaction,
+    storage: TempChannelStorage,
+    channel: discord.VoiceChannel,
+    record,
+) -> None:
+    admin = interaction.user
+    logger.info(
+        "Admin override: %s (%s) acted on room %s owned by %s in guild %s",
+        admin,
+        admin.id,
+        channel.id,
+        record["owner_user_id"],
+        interaction.guild.id,
+    )
+
+    guild_config = await storage.get_guild_config(interaction.guild.id)
+    log_channel_id = guild_config["mod_log_channel_id"] if guild_config else None
+    if not log_channel_id:
+        return
+
+    log_channel = interaction.guild.get_channel(int(log_channel_id))
+    if not isinstance(log_channel, discord.abc.Messageable):
+        return
+
+    embed = discord.Embed(
+        title="YapHub admin override",
+        description=(
+            f"{admin.mention} managed {channel.mention} without being its owner, "
+            "using their Manage Channels permission."
+        ),
+        color=0xFF3DF2,
+    )
+    embed.add_field(name="Room owner", value=f"<@{record['owner_user_id']}>", inline=True)
+    embed.set_footer(text="YapHub")
+
+    try:
+        await log_channel.send(embed=embed)
+    except (discord.Forbidden, discord.HTTPException):
+        logger.exception("Failed to post admin-override log to channel %s", log_channel_id)
 
 
 async def resolve_owned_temp_channel(

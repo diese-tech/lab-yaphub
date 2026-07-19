@@ -156,6 +156,20 @@ async def grant_member_access(
     await channel.set_permissions(member, overwrite=overwrite, reason=reason)
 
 
+async def deny_member_access(
+    channel: discord.VoiceChannel,
+    member: discord.Member,
+    reason: str,
+) -> None:
+    """Persistently block a member from seeing/joining this room until
+    unblocked. Per-member overwrites always beat role/@everyone overwrites,
+    so this holds regardless of the room's lock/hide state."""
+    overwrite = channel.overwrites_for(member)
+    overwrite.view_channel = False
+    overwrite.connect = False
+    await channel.set_permissions(member, overwrite=overwrite, reason=reason)
+
+
 async def unhide_temp_channel(channel: discord.VoiceChannel, reason: str) -> None:
     await _lift_default_restriction(channel, "view_channel", reason)
 

@@ -2,6 +2,7 @@ create table if not exists guild_configs (
   guild_id text primary key,
   temp_channel_prefix text not null default '',
   notification_cooldown_seconds integer not null default 45,
+  mod_log_channel_id text,
   created_at text not null,
   updated_at text not null
 );
@@ -42,6 +43,13 @@ create index if not exists idx_active_temp_channels_guild
   on active_temp_channels (guild_id);
 
 create table if not exists temp_channel_permits (
+  channel_id text not null,
+  user_id text not null,
+  created_at text not null,
+  primary key (channel_id, user_id)
+);
+
+create table if not exists temp_channel_blocks (
   channel_id text not null,
   user_id text not null,
   created_at text not null,

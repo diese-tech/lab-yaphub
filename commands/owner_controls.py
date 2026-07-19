@@ -2,15 +2,18 @@ import discord
 
 from services.ownership import resolve_owned_temp_channel
 from services.room_actions import (
+    apply_block,
     apply_hide,
     apply_limit,
     apply_lock,
     apply_permit,
     apply_rename,
     apply_transfer,
+    apply_unblock,
     apply_unhide,
     apply_unlock,
     apply_unpermit,
+    blocked_members,
     build_room_info_embed,
     permitted_members,
 )
@@ -20,14 +23,14 @@ async def rename_temp_channel(bot, interaction: discord.Interaction, name: str) 
     channel = await resolve_owned_temp_channel(interaction, bot.storage)
     if channel is None:
         return
-    await apply_rename(interaction, channel, name)
+    await apply_rename(bot, interaction, channel, name)
 
 
 async def limit_temp_channel(bot, interaction: discord.Interaction, count: int) -> None:
     channel = await resolve_owned_temp_channel(interaction, bot.storage)
     if channel is None:
         return
-    await apply_limit(interaction, channel, count)
+    await apply_limit(bot, interaction, channel, count)
 
 
 async def transfer_temp_channel(
@@ -52,7 +55,7 @@ async def unlock_owned_temp_channel(bot, interaction: discord.Interaction) -> No
     channel = await resolve_owned_temp_channel(interaction, bot.storage)
     if channel is None:
         return
-    await apply_unlock(interaction, channel)
+    await apply_unlock(bot, interaction, channel)
 
 
 async def hide_owned_temp_channel(bot, interaction: discord.Interaction) -> None:
@@ -66,7 +69,7 @@ async def unhide_owned_temp_channel(bot, interaction: discord.Interaction) -> No
     channel = await resolve_owned_temp_channel(interaction, bot.storage)
     if channel is None:
         return
-    await apply_unhide(interaction, channel)
+    await apply_unhide(bot, interaction, channel)
 
 
 async def permit_member(bot, interaction: discord.Interaction, user: discord.Member) -> None:
@@ -81,6 +84,20 @@ async def unpermit_member(bot, interaction: discord.Interaction, user: discord.M
     if channel is None:
         return
     await apply_unpermit(bot, interaction, channel, user)
+
+
+async def block_member(bot, interaction: discord.Interaction, user: discord.Member) -> None:
+    channel = await resolve_owned_temp_channel(interaction, bot.storage)
+    if channel is None:
+        return
+    await apply_block(bot, interaction, channel, user)
+
+
+async def unblock_member(bot, interaction: discord.Interaction, user: discord.Member) -> None:
+    channel = await resolve_owned_temp_channel(interaction, bot.storage)
+    if channel is None:
+        return
+    await apply_unblock(bot, interaction, channel, user)
 
 
 async def show_room_info(bot, interaction: discord.Interaction) -> None:
@@ -116,6 +133,7 @@ async def show_room_info(bot, interaction: discord.Interaction) -> None:
             record,
             interaction.guild,
             permitted=await permitted_members(bot, interaction.guild, channel.id),
+            blocked=await blocked_members(bot, interaction.guild, channel.id),
         ),
         ephemeral=True,
     )
