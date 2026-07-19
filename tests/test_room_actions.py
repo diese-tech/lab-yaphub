@@ -18,6 +18,7 @@ def guild(guild_factory):
 
 def _bot(**storage_overrides):
     defaults = dict(
+        get_active_temp_channel=AsyncMock(return_value=None),
         get_active_temp_channel_by_owner=AsyncMock(return_value=None),
         transfer_active_temp_channel_owner=AsyncMock(),
         remove_permit=AsyncMock(),
@@ -98,8 +99,29 @@ async def test_apply_transfer_success_calls_refresh_after_response_exactly_once(
         await apply_transfer(bot, interaction, channel, target)
 
     bot.storage.transfer_active_temp_channel_owner.assert_awaited_once_with(500, target.id)
-    refresh_mock.assert_awaited_once_with(bot, channel, target)
+    refresh_mock.assert_awaited_once_with(bot, channel)
     assert call_order == ["send_message", "refresh_panel_message"]
+
+
+async def test_apply_transfer_admin_override_logs_with_pre_transfer_owner(guild):
+    # An admin (not the room's owner) transferring the room must be logged
+    # as an override, attributed to the owner *before* the transfer -- a
+    # post-mutation re-fetch would see the new owner and misfire on an
+    # ordinary owner-initiated transfer instead (this is what regressed
+    # when log_admin_action was first added).
+    admin = make_member(9, guild, manage_channels=True)
+    target = make_member(2, guild)
+    channel = make_voice_channel(500, guild, members=[admin, target])
+    interaction = make_interaction(admin, guild)
+    pre_record = {"owner_user_id": "1"}
+    bot = _bot(get_active_temp_channel=AsyncMock(return_value=pre_record))
+
+    with patch("services.panel.refresh_panel_message", new=AsyncMock()), patch(
+        "services.room_actions.log_admin_action", new=AsyncMock()
+    ) as log_mock:
+        await apply_transfer(bot, interaction, channel, target)
+
+    log_mock.assert_awaited_once_with(bot, interaction, channel, record=pre_record)
 
 
 # --- apply_claim --------------------------------------------------------
@@ -184,7 +206,7 @@ async def test_apply_claim_success_calls_refresh_after_response_exactly_once(gui
         await apply_claim(bot, interaction, channel)
 
     bot.storage.transfer_active_temp_channel_owner.assert_awaited_once_with(500, claimant.id)
-    refresh_mock.assert_awaited_once_with(bot, channel, claimant)
+    refresh_mock.assert_awaited_once_with(bot, channel)
     assert call_order == ["send_message", "refresh_panel_message"]
 
 

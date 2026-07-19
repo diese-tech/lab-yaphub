@@ -31,6 +31,7 @@ def _make_bot(*, guild=None, get_guild=None, fetch_channel=None):
         delete_active_temp_channel=AsyncMock(),
         touch_active_temp_channel=AsyncMock(),
         set_panel_message_id=AsyncMock(),
+        list_permits=AsyncMock(return_value=[]),
     )
     bot = types.SimpleNamespace(
         storage=storage,
@@ -122,8 +123,38 @@ async def test_reconcile_backfills_panel_message_when_owner_present():
     ) as send_panel:
         await reconcile_active_temp_channels(bot)
 
-    send_panel.assert_awaited_once_with(channel, owner)
+    send_panel.assert_awaited_once_with(channel, owner, locked=False, hidden=False, permitted=())
     bot.storage.set_panel_message_id.assert_awaited_once_with(500, 888)
+
+
+async def test_reconcile_backfills_panel_message_with_actual_locked_hidden_state():
+    # The backfilled panel must reflect the room's real current state, not
+    # just post with unlocked/visible defaults -- this room predates
+    # panel_message_id but was already locked and hidden.
+    import discord
+
+    row = _row(panel_message_id=None)
+    guild = make_guild(1)
+    owner = make_member(42, guild)
+    guild.get_member = Mock(return_value=owner)
+    channel = make_voice_channel(500, guild, members=[owner])
+    channel.overwrites[guild.default_role] = discord.PermissionOverwrite(
+        connect=False, view_channel=False
+    )
+    guild.get_channel = Mock(return_value=channel)
+    bot = _make_bot(guild=guild)
+    bot.storage.list_active_temp_channels = AsyncMock(return_value=[row])
+    bot.storage.list_permits = AsyncMock(return_value=[{"user_id": "42"}])
+
+    panel_message = make_message(message_id=888)
+    with patch(
+        "services.temp_channels.send_room_panel", new=AsyncMock(return_value=panel_message)
+    ) as send_panel:
+        await reconcile_active_temp_channels(bot)
+
+    send_panel.assert_awaited_once_with(
+        channel, owner, locked=True, hidden=True, permitted=(owner,)
+    )
 
 
 async def test_reconcile_skips_backfill_when_owner_left_guild():
