@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+venv/
+.venv/
+env/
+
+# Environment
+.env
+data/
+*.sqlite3
+
+# VS Code
+.vscode/
+
+# Claude Code local state (settings, isolated worktree checkouts)
+.claude/
+
+# macOS
+.DS_Store

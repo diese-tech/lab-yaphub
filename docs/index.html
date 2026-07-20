@@ -1,0 +1,1307 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <script src="https://kit.fontawesome.com/0ce74f9c88.js" crossorigin="anonymous"></script>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>YapHub | Temporary Voice Channels for Discord</title>
+  <meta name="description"
+    content="YapHub is a lightweight Discord bot for temporary voice channels, cleaner community voice management, and VoiceMaster-style join-to-create rooms." />
+  <style>
+    /* ==========================================================================
+         Design tokens
+         ========================================================================== */
+
+    :root {
+      --bg: #050611;
+      --ink: #f7f7ff;
+      --muted: #a8acc8;
+      --cyan: #23d8ff;
+      --purple: #a855f7;
+      --discord: #5865f2;
+      --lime: #64ffb4;
+      --danger: #ff3df2;
+      --panel: #0c1024;
+      --panel2: #121735;
+      --line: rgba(255, 255, 255, 0.18);
+      --hard: #ffffff;
+      --shadow: 12px 12px 0 rgba(0, 0, 0, 0.8);
+    }
+
+    /* ==========================================================================
+         Base / reset
+         ========================================================================== */
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0 auto;
+      min-height: 100vh;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--ink);
+      background:
+        linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+        radial-gradient(circle at 20% 10%, rgba(35, 216, 255, 0.22), transparent 28rem),
+        radial-gradient(circle at 80% 12%, rgba(168, 85, 247, 0.23), transparent 32rem),
+        linear-gradient(135deg, #04040b, #090b1d 45%, #050611);
+      background-size: 42px 42px, 42px 42px, auto, auto, auto;
+      line-height: 1.55;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background:
+        linear-gradient(120deg, transparent 0 45%, rgba(35, 216, 255, 0.07) 45% 46%, transparent 46% 100%),
+        repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.025) 0 1px, transparent 1px 4px);
+      mix-blend-mode: screen;
+    }
+
+    a {
+      color: inherit;
+    }
+
+    p {
+      margin: 0;
+    }
+
+
+    /* Carousel wrapper */
+    .carousel-wrapper {
+      position: relative;
+      width: 100%;
+      margin-top: 42px;
+      overflow: hidden;
+      padding: 1rem 0;
+    }
+
+    /* Scrollable carousel */
+    .carousel {
+      display: flex;
+      gap: 16px;
+      overflow-x: auto;
+      padding: 0 32px 12px;
+      scroll-snap-type: x mandatory;
+      scroll-behavior: smooth;
+      scrollbar-width: none;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .carousel::-webkit-scrollbar {
+      display: none;
+    }
+
+    /* Preserve the existing YapHub card styling */
+    .carousel .card {
+      flex: 0 0 calc((100% - 32px) / 3);
+      min-width: 0;
+      scroll-snap-align: start;
+    }
+
+    .carousel h3 {
+      margin-top: 0;
+    }
+
+    /* Dark edge fades that match the page */
+    .fade-left,
+    .fade-right {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 70px;
+      pointer-events: none;
+      z-index: 2;
+    }
+
+    .fade-left {
+      left: 0;
+      background: linear-gradient(to right, var(--bg), rgba(5, 6, 17, 0));
+    }
+
+    .fade-right {
+      right: 0;
+      background: linear-gradient(to left, var(--bg), rgba(5, 6, 17, 0));
+    }
+
+    /* ==========================================================================
+         Utilities
+         ========================================================================== */
+
+    .u-muted {
+      color: var(--muted);
+    }
+
+    /* ==========================================================================
+         Block: page-shell
+         Outer page container / max-width wrapper.
+         ========================================================================== */
+
+    .page-shell {
+      width: min(1180px, calc(100% - 28px));
+      margin: 0 auto;
+      padding: 24px 0 64px;
+    }
+
+    /* ==========================================================================
+         Block: site-header
+         ========================================================================== */
+
+    .site-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 34px;
+      border: 3px solid var(--hard);
+      background: #070816;
+      box-shadow: 8px 8px 0 rgba(88, 101, 242, 0.7);
+      padding: 12px 14px;
+    }
+
+    .site-header__brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-weight: 1000;
+      letter-spacing: -0.04em;
+      text-transform: uppercase;
+    }
+
+    .site-header__logo {
+      width: 52px;
+      height: 52px;
+      border-radius: 0;
+      object-fit: cover;
+      border: 3px solid var(--hard);
+      box-shadow: 0 0 22px rgba(35, 216, 255, 0.75);
+    }
+
+    .site-header__tag {
+      display: block;
+      color: var(--cyan);
+      font-size: 0.72rem;
+      letter-spacing: 0.18em;
+      margin-top: -4px;
+    }
+
+    .site-header__nav {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .site-header__nav-link {
+      text-decoration: none;
+      color: var(--ink);
+      border: 2px solid var(--hard);
+      padding: 9px 13px;
+      background: #11162f;
+      font-weight: 900;
+      text-transform: uppercase;
+      font-size: 0.78rem;
+      transition: all 500ms ease-in-out;
+    }
+
+    .site-header__nav-link:hover {
+      background: var(--discord);
+      transform: translate(2px, 2px);
+    }
+
+    /* ==========================================================================
+         Block: button
+         Modifiers: button--primary, button--secondary
+         ========================================================================== */
+
+    .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 54px;
+      padding: 0 20px;
+      border: 3px solid var(--hard);
+      font-weight: 1000;
+      text-decoration: none;
+      text-transform: uppercase;
+      letter-spacing: -0.02em;
+      box-shadow: 7px 7px 0 rgba(0, 0, 0, 0.85);
+      transition: transform 0.12s ease, box-shadow 0.12s ease, background 0.12s ease;
+    }
+
+    .button:hover {
+      transform: translate(3px, 3px);
+      opacity: 0.60;
+      box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.85);
+    }
+
+    .button--primary {
+      background: linear-gradient(135deg, var(--cyan), var(--purple));
+      color: #030412;
+    }
+
+    .button--secondary {
+      background: #151b3a;
+      color: var(--ink);
+    }
+
+    /* Block: button-row
+         Layout wrapper for one or more buttons placed side by side. Reused
+         in the hero and in the closing CTA card. */
+
+    .button-row {
+      display: flex;
+      gap: 14px;
+      flex-wrap: wrap;
+      margin-top: 30px;
+      position: relative;
+      z-index: 1;
+    }
+
+    /* ==========================================================================
+         Block: hero
+         ========================================================================== */
+
+    .hero {
+      display: grid;
+      grid-template-columns: 0.96fr 1.04fr;
+      gap: 24px;
+      align-items: stretch;
+    }
+
+    .hero__copy {
+      border: 3px solid var(--hard);
+      background: linear-gradient(135deg, rgba(12, 16, 36, 0.96), rgba(7, 8, 22, 0.94));
+      box-shadow: var(--shadow);
+      padding: 30px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hero__copy::after {
+      content: "VOICE OPS";
+      position: absolute;
+      right: -18px;
+      bottom: 8px;
+      color: rgba(255, 255, 255, 0.035);
+      font-size: 7rem;
+      font-weight: 1000;
+      letter-spacing: -0.08em;
+      line-height: 1;
+    }
+
+    .hero__eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 18px;
+      color: #020412;
+      background: var(--lime);
+      border: 2px solid var(--hard);
+      padding: 7px 10px;
+      font-size: 0.8rem;
+      font-weight: 1000;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      box-shadow: 5px 5px 0 rgba(0, 0, 0, 0.8);
+    }
+
+    .hero__title {
+      position: relative;
+      margin: 0;
+      font-size: clamp(3.2rem, 7.8vw, 6.4rem);
+      line-height: 0.88;
+      letter-spacing: -0.09em;
+      text-transform: uppercase;
+      text-shadow: 4px 4px 0 rgba(88, 101, 242, 0.8), 0 0 28px rgba(35, 216, 255, 0.25);
+      z-index: 1;
+    }
+
+    .hero__lead {
+      position: relative;
+      max-width: 720px;
+      margin: 24px 0 0;
+      color: var(--muted);
+      font-size: clamp(1.05rem, 1.8vw, 1.26rem);
+      z-index: 1;
+    }
+
+    /* ==========================================================================
+         Block: stats
+         ========================================================================== */
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 14px;
+      margin-top: 24px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .stats__item {
+      border: 3px solid var(--hard);
+      background: #060814;
+      padding: 14px 16px;
+      box-shadow: 7px 7px 0 rgba(88, 101, 242, 0.65);
+    }
+
+    .stats__value {
+      display: block;
+      font-size: clamp(2.2rem, 4vw, 3.6rem);
+      line-height: 0.9;
+      letter-spacing: -0.08em;
+      text-transform: uppercase;
+      color: var(--cyan);
+      text-shadow: 3px 3px 0 rgba(168, 85, 247, 0.7);
+    }
+
+    .stats__label {
+      display: block;
+      margin-top: 8px;
+      color: var(--muted);
+      font-weight: 900;
+      text-transform: uppercase;
+      font-size: 0.78rem;
+      letter-spacing: 0.06em;
+    }
+
+    .stats__meta {
+      display: block;
+      margin-top: 8px;
+      color: rgba(255, 255, 255, 0.45);
+      font-weight: 800;
+      text-transform: uppercase;
+      font-size: 0.68rem;
+    }
+
+    /* ==========================================================================
+         Block: showcase
+         The branded "example Discord server" preview panel in the hero.
+         ========================================================================== */
+
+    .showcase {
+      border: 3px solid var(--hard);
+      background: #070816;
+      box-shadow: var(--shadow);
+      padding: 12px;
+      overflow: hidden;
+    }
+
+    .showcase__banner {
+      width: 100%;
+      display: block;
+      border: 3px solid var(--hard);
+      box-shadow: 0 0 36px rgba(35, 216, 255, 0.22);
+    }
+
+    .showcase__mock {
+      margin-top: 12px;
+      border: 3px solid var(--hard);
+      background: #101529;
+      padding: 16px;
+    }
+
+    .showcase__mock-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+      text-transform: uppercase;
+      font-weight: 1000;
+    }
+
+    .showcase__badge {
+      display: inline-flex;
+      padding: 6px 9px;
+      background: var(--lime);
+      color: #030412;
+      border: 2px solid var(--hard);
+      font-size: 0.74rem;
+      font-weight: 1000;
+    }
+
+    .showcase__channel-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .showcase__channel {
+      padding: 11px 12px;
+      background: #0b0f21;
+      border: 2px solid rgba(255, 255, 255, 0.28);
+      font-weight: 800;
+      transition: all 300ms ease-in-out;
+    }
+
+    .showcase__channel:hover {
+      transform: translateX(6px);
+      opacity: 0.75;
+    }
+
+    .showcase__channel-desc {
+      display: block;
+      color: var(--muted);
+      margin-top: 2px;
+      font-weight: 600;
+    }
+
+    .showcase__channel--created {
+      border-color: var(--cyan);
+      box-shadow: inset 5px 0 0 var(--cyan);
+      background: rgba(35, 216, 255, 0.08);
+    }
+
+    .showcase__channel--created:hover {
+      background: rgba(35, 216, 255, 0.12);
+    }
+
+    /* ==========================================================================
+         Block: card
+         Generic reusable panel used by the features grid, the setup steps,
+         the two-column info sections, and the closing CTA.
+         Modifiers: card--accent-a, card--accent-b, card--cta
+         ========================================================================== */
+
+    .card {
+      border: 3px solid var(--hard);
+      background: linear-gradient(135deg, #101529, #080a18);
+      padding: 22px;
+      box-shadow: 8px 8px 0 rgba(0, 0, 0, 0.82);
+    }
+
+    .card--accent-a {
+      box-shadow: 8px 8px 0 rgba(88, 101, 242, 0.75);
+    }
+
+    .card--accent-b {
+      box-shadow: 8px 8px 0 rgba(35, 216, 255, 0.45);
+    }
+
+    .card--cta {
+      background: linear-gradient(135deg, rgba(88, 101, 242, 0.28), rgba(35, 216, 255, 0.14));
+      position: relative;
+      overflow: hidden;
+    }
+
+    .card--cta::after {
+      content: "/yap setup";
+      position: absolute;
+      right: 18px;
+      bottom: 6px;
+      color: rgba(255, 255, 255, 0.07);
+      font-size: 4rem;
+      font-weight: 1000;
+      letter-spacing: -0.07em;
+    }
+
+    .card__heading {
+      margin: 0 0 12px;
+      font-size: clamp(1.9rem, 3vw, 2.65rem);
+      line-height: 0.95;
+      letter-spacing: -0.07em;
+      text-transform: uppercase;
+    }
+
+    .card__title,
+    .steps__title {
+      margin: 0 0 8px;
+      font-size: 1.1rem;
+      text-transform: uppercase;
+      letter-spacing: -0.03em;
+    }
+
+    .card__text {
+      margin: 0;
+      padding: 12px 0;
+      font-weight: bold;
+    }
+
+    /* ==========================================================================
+         Block: page-section
+         Vertical rhythm wrapper for the sections below the hero.
+         Modifier: page-section--split (two-column layout)
+         ========================================================================== */
+
+    .page-section {
+      margin-top: 62px;
+    }
+
+    .page-section--split {
+      display: grid;
+      grid-template-columns: 0.92fr 1.08fr;
+      gap: 18px;
+      align-items: start;
+    }
+
+    /* ==========================================================================
+         Block: features
+         The three-card highlight grid.
+         ========================================================================== */
+
+    .features {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+      margin-top: 42px;
+    }
+
+    /* ==========================================================================
+         Block: steps
+         Numbered setup steps. Combined with .card for the outer border /
+         background treatment; .steps itself only governs the internal grid.
+         ========================================================================== */
+
+    .steps {
+      counter-reset: step;
+      display: grid;
+      gap: 12px;
+    }
+
+    .steps__item {
+      counter-increment: step;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      align-items: start;
+      border: 2px solid rgba(255, 255, 255, 0.18);
+      background: rgba(255, 255, 255, 0.04);
+      padding: 12px;
+    }
+
+    .steps__item::before {
+      content: "0" counter(step);
+      width: 44px;
+      height: 44px;
+      display: grid;
+      place-items: center;
+      background: var(--discord);
+      border: 2px solid var(--hard);
+      font-weight: 1000;
+      color: white;
+    }
+
+    /* ==========================================================================
+         Block: setup video
+         Full-width section contained by .page-shell.
+         ========================================================================== */
+
+    .video-section {
+      width: 100%;
+    }
+
+    .video-card {
+      padding: 12px;
+      overflow: hidden;
+    }
+
+    .video-frame {
+      position: relative;
+      width: 100%;
+      max-width: 1100px;
+      aspect-ratio: 5 / 4;
+      overflow: hidden;
+      border: 3px solid var(--hard);
+      background: #03040c;
+      margin: 0 auto;
+    }
+
+    .video-background {
+      position: absolute;
+      inset: -20px;
+      width: calc(100% + 40px);
+      height: calc(100% + 40px);
+      object-fit: cover;
+      filter: blur(24px);
+      opacity: 0.45;
+      transform: scale(1.08);
+    }
+
+    .video-embed {
+      position: relative;
+      z-index: 1;
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+
+    /* ==========================================================================
+         Block: code-sample
+         ========================================================================== */
+
+    .code-sample {
+      overflow-wrap: anywhere;
+      padding: 14px;
+      border: 2px solid rgba(255, 255, 255, 0.24);
+      background: #03040c;
+      color: #dce5ff;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.9rem;
+      box-shadow: inset 5px 0 0 var(--purple);
+    }
+
+    .code-sample__container--image {
+      display: flex;
+      justify-content: center;
+      margin-top: 12px;
+      width: 100%;
+    }
+
+    .command-list__image {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+
+    /* ==========================================================================
+         Block: community section
+         Left column stacks the copy and command cards.
+         Right column contains the YapHub controls image.
+         ========================================================================== */
+
+    .community-section {
+      align-items: stretch;
+    }
+
+    .community-section__copy {
+      display: grid;
+      gap: 18px;
+      min-width: 0;
+    }
+
+    .community-section__image-card {
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .code-sample__container--image {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+    }
+
+    .community-section__image {
+      display: block;
+      width: 100%;
+      height: auto;
+      max-height: 100%;
+      object-fit: contain;
+    }
+
+    /* ==========================================================================
+         Block: permissions ticker
+         ========================================================================== */
+
+    .permissions-card {
+      min-width: 0;
+      overflow: hidden;
+      padding-left: 0;
+      padding-right: 0;
+    }
+
+    .permissions-ticker {
+      position: relative;
+      width: 100%;
+      max-width: 100%;
+      overflow: hidden;
+      display: grid;
+      gap: 10px;
+      padding: 16px 0;
+    }
+
+    .permissions-row {
+      width: 100%;
+      min-width: 0;
+      overflow: hidden;
+    }
+
+    .permissions-track {
+      display: flex;
+      width: max-content;
+      will-change: transform;
+    }
+
+    .permissions-group {
+      display: flex;
+      gap: 10px;
+      padding-right: 10px;
+      flex-shrink: 0;
+    }
+
+    .permissions__item {
+      flex-shrink: 0;
+      white-space: nowrap;
+      padding: 8px 11px;
+      border: 2px solid rgba(255, 255, 255, 0.26);
+      background: #0b0f21;
+      color: var(--ink);
+      font-size: 0.88rem;
+      font-weight: 800;
+    }
+
+    .permissions-row--left .permissions-track {
+      animation: permissions-left 18s linear infinite;
+    }
+
+    .permissions-row--right .permissions-track {
+      animation: permissions-right 20s linear infinite;
+    }
+
+    .permissions-ticker:hover .permissions-track {
+      animation-play-state: paused;
+    }
+
+    @keyframes permissions-left {
+      from {
+        transform: translateX(0);
+      }
+
+      to {
+        transform: translateX(-50%);
+      }
+    }
+
+    @keyframes permissions-right {
+      from {
+        transform: translateX(-50%);
+      }
+
+      to {
+        transform: translateX(0);
+      }
+    }
+
+    .permissions-ticker::before,
+    .permissions-ticker::after {
+      content: "";
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 55px;
+      z-index: 2;
+      pointer-events: none;
+    }
+
+    .permissions-ticker::before {
+      left: 0;
+      background: linear-gradient(to right, #080a18, transparent);
+    }
+
+    .permissions-ticker::after {
+      right: 0;
+      background: linear-gradient(to left, #080a18, transparent);
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .permissions-track {
+        animation: none !important;
+      }
+    }
+
+    /* ==========================================================================
+         Block: site-footer
+         ========================================================================== */
+
+    .site-footer {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+      margin-top: 64px;
+      padding: 18px 0 0;
+      color: var(--muted);
+      border-top: 3px solid var(--hard);
+      font-weight: 800;
+    }
+
+
+    /* ==========================================================================
+   Motion and scroll reveals
+   ========================================================================== */
+
+html {
+  scroll-behavior: smooth;
+}
+
+/* Elements waiting to enter the viewport */
+.reveal {
+  opacity: 0;
+  transform: translateY(32px);
+  transition:
+    opacity 700ms ease,
+    transform 700ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: opacity, transform;
+}
+
+/* Applied by JavaScript once visible */
+.reveal.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Optional reveal directions */
+.reveal--left {
+  transform: translateX(-32px);
+}
+
+.reveal--right {
+  transform: translateX(32px);
+}
+
+.reveal--left.is-visible,
+.reveal--right.is-visible {
+  transform: translateX(0);
+}
+
+/* Stagger children inside a revealed group */
+.reveal-stagger > * {
+  opacity: 0;
+  transform: translateY(20px);
+  transition:
+    opacity 600ms ease,
+    transform 600ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.reveal-stagger.is-visible > * {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.reveal-stagger.is-visible > *:nth-child(1) {
+  transition-delay: 100ms;
+}
+
+.reveal-stagger.is-visible > *:nth-child(2) {
+  transition-delay: 200ms;
+}
+
+.reveal-stagger.is-visible > *:nth-child(3) {
+  transition-delay: 300ms;
+}
+
+.reveal-stagger.is-visible > *:nth-child(4) {
+  transition-delay: 400ms;
+}
+
+/* Hero entrance animation */
+.hero__eyebrow,
+.hero__title,
+.hero__lead,
+.hero .button-row,
+.hero .stats {
+  opacity: 0;
+  transform: translateY(24px);
+  animation: hero-enter 700ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.hero__eyebrow {
+  animation-delay: 300ms;
+}
+
+.hero__title {
+  animation-delay: 440ms;
+}
+
+.hero__lead {
+  animation-delay: 660ms;
+}
+
+.hero .button-row {
+  animation-delay: 800ms;
+}
+
+.hero .stats {
+  animation-delay: 1300ms;
+}
+
+.showcase {
+  opacity: 0;
+  transform: translateX(32px);
+  animation: showcase-enter 850ms 300ms
+    cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@keyframes hero-enter {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes showcase-enter {
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* Respect accessibility settings */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  .reveal,
+  .reveal--left,
+  .reveal--right,
+  .reveal-stagger > *,
+  .hero__eyebrow,
+  .hero__title,
+  .hero__lead,
+  .hero .button-row,
+  .hero .stats,
+  .showcase {
+    opacity: 1;
+    transform: none;
+    animation: none;
+    transition: none;
+  }
+}
+
+    /* ==========================================================================
+         Responsive
+         ========================================================================== */
+
+    @media (max-width: 860px) {
+
+      .site-header,
+      .hero,
+      .page-section--split,
+      .features,
+      .stats {
+        grid-template-columns: 1fr;
+      }
+
+      .site-header {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .site-header__nav {
+        justify-content: flex-start;
+      }
+
+      .hero__copy {
+        padding: 22px;
+      }
+
+      .hero__copy::after {
+        font-size: 4rem;
+      }
+
+      .card--cta::after {
+        display: none;
+      }
+
+      .carousel .card {
+        flex-basis: 80%;
+      }
+
+      .video-card {
+        padding: 8px;
+      }
+
+      .video-frame {
+        aspect-ratio: 4 / 3;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="page-shell">
+    <header class="site-header">
+      <div class="site-header__brand">
+        <img class="site-header__logo" src="./assets/yaphub-pfp.png" alt="YapHub logo" />
+        <div>
+          YapHub
+          <span class="site-header__tag">Temp voice bot</span>
+        </div>
+      </div>
+      <nav class="site-header__nav" aria-label="YapHub links">
+        <a class="site-header__nav-link" href="#setup">Setup</a>
+        <a class="site-header__nav-link" href="#permissions">Permissions</a>
+        <a class="site-header__nav-link"
+          href="https://discord.com/oauth2/authorize?client_id=1503456577666154506&permissions=277311728656&integration_type=0&scope=applications.commands+bot"><i
+            class="fa-brands fa-discord fa-shake fa-xl fa-canvas-roomy" style="color: rgb(99, 230, 190);"></i></a>
+      </nav>
+    </header>
+    <main>
+      <section class="hero">
+        <div class="hero__copy">
+          <div class="hero__eyebrow">A Faster way to get yapping</div>
+          <h1 class="hero__title">Need voice rooms but don't want the clutter?</h1>
+          <p class="hero__lead">YapHub gives your community join-to-create voice rooms that appear when members need
+            them and disappear when they are empty. Cleaner servers, fewer moderation chores, more actual yapping.</p>
+          <div class="button-row">
+            <a class="button button--primary"
+              href="https://discord.com/oauth2/authorize?client_id=1503456577666154506&permissions=277311728656&integration_type=0&scope=applications.commands+bot">Add
+              to Discord</a>
+            <a class="button button--secondary" href="#setup">View setup</a>
+          </div>
+          <div class="stats" aria-label="YapHub public stats">
+            <div class="stats__item">
+              <strong class="stats__value" id="guild-count">—</strong>
+              <span class="stats__label">Servers using YapHub</span>
+              <small class="stats__meta" id="stats-updated">Stats loading</small>
+            </div>
+            <div class="stats__item">
+              <strong class="stats__value" id="rooms-created">—</strong>
+              <span class="stats__label">Temp rooms created</span>
+              <small class="stats__meta">All-time counter soon</small>
+            </div>
+          </div>
+        </div>
+        <aside class="showcase" aria-label="YapHub branding and example Discord voice layout">
+          <img class="showcase__banner" src="./assets/yaphub-banner.png" alt="YapHub banner" />
+          <div class="showcase__mock">
+            <div class="showcase__mock-header">
+              <strong>Your Server</strong>
+              <span class="showcase__badge">Auto cleanup<i class="fa-solid fa-repeat fa-lg fa-canvas-roomy"></i></span>
+            </div>
+            <div class="showcase__channel-list">
+              <div class="showcase__channel">
+                <i class="fa-solid fa-volume-high fa-canvas-roomy"></i> Join to Yap
+                <small class="showcase__channel-desc">Members join here to spawn a temporary room.</small>
+              </div>
+              <div class="showcase__channel showcase__channel--created">
+                <i class="fa-solid fa-volume-high fa-canvas-roomy"></i> @Bob Yap
+                <small class="showcase__channel-desc">Created automatically. One active owned room per server.</small>
+              </div>
+              <div class="showcase__channel">
+                <i class="fa-solid fa-volume-high fa-canvas-roomy"></i> Community - Join to Yap
+                <small class="showcase__channel-desc">Optional category-specific lobby.</small>
+              </div>
+              <div class="showcase__channel showcase__channel--created">
+                <i class="fa-solid fa-volume-high fa-canvas-roomy"></i> Quiet Gaming
+                <small class="showcase__channel-desc">Deleted after the last member leaves.</small>
+              </div>
+            </div>
+          </div>
+        </aside>
+      </section>
+      <section class="carousel-wrapper reveal" aria-label="YapHub highlights">
+        <div class="fade-left"></div>
+        <div class="fade-right"></div>
+        <div class="carousel reveal-stagger" id="carousel">
+          <article class="card">
+            <h3 class="card__title">Join-to-create</h3>
+            <p class="card__text u-muted">Members join a lobby. YapHub creates a room. No admin babysitting.</p>
+          </article>
+          <article class="card card--accent-a">
+            <h3 class="card__title">Multi-server ready</h3>
+            <p class="card__text u-muted">Invite YapHub to multiple Discord servers and configure each one
+              independently.
+            </p>
+          </article>
+          <article class="card card--accent-b">
+            <h3 class="card__title">Self-cleaning</h3>
+            <p class="card__text u-muted">Temporary rooms vanish after they empty, so your sidebar stays readable.</p>
+          </article>
+        </div>
+      </section>
+
+      <script>
+        const carousel = document.getElementById('carousel');
+        let autoScroll;
+
+        function getCardWidth() {
+          const card = carousel.querySelector('.card');
+          const styles = getComputedStyle(carousel);
+          const gap = parseFloat(styles.columnGap) || 0;
+
+          return card.offsetWidth + gap;
+        }
+
+        function startAutoScroll() {
+          clearInterval(autoScroll);
+
+          autoScroll = setInterval(() => {
+            const reachedEnd =
+              carousel.scrollLeft + carousel.clientWidth >=
+              carousel.scrollWidth - 5;
+
+            carousel.scrollTo({
+              left: reachedEnd ? 0 : carousel.scrollLeft + getCardWidth(),
+              behavior: 'smooth'
+            });
+          }, 3000);
+        }
+
+        function stopAutoScroll() {
+          clearInterval(autoScroll);
+        }
+
+        startAutoScroll();
+
+        carousel.addEventListener('mouseenter', stopAutoScroll);
+        carousel.addEventListener('mouseleave', startAutoScroll);
+        carousel.addEventListener('touchstart', stopAutoScroll, { passive: true });
+        carousel.addEventListener('touchend', startAutoScroll);
+      </script>
+
+      <section id="setup" class="page-section video-section reveal">
+        <div class="card video-card">
+          <h2 class="card__heading">Setup without the dev ritual.</h2>
+          <p class="card__text u-muted">
+            See how quickly YapHub can be configured and ready for temporary voice rooms.
+          </p>
+
+          <div class="video-frame">
+            <video class="video-background" autoplay muted loop playsinline aria-hidden="true">
+              <source src="./assets/quick-setup.mp4" type="video/mp4">
+            </video>
+
+            <video class="video-embed" autoplay muted loop playsinline preload="metadata"
+              aria-label="Quick YapHub setup demonstration">
+              <source src="./assets/quick-setup.mp4" type="video/mp4">
+            </video>
+          </div>
+        </div>
+      </section>
+
+      <section class="page-section page-section--split community-section">
+        <div class="community-section__copy reveal reveal--left">
+          <div class="card">
+            <h2 class="card__heading">Built for Discord communities.</h2>
+            <p class="card__text u-muted">Gaming servers, leagues, friend groups, creator communities — anywhere voice
+              channels multiply like gremlins after midnight.</p>
+          </div>
+
+          <div class="card">
+            <h2 class="card__heading">Common commands</h2>
+            <div class="code-sample">/yap setup category:#GENERAL VOICE</div>
+            <br />
+            <div class="code-sample">/yap config</div>
+            <br />
+            <div class="code-sample">/yap profile create name:"Quiet Gaming" category:#SMITE-LOWER-DIV
+              lobby_name:"Lower Div Join to Yap"</div>
+          </div>
+        </div>
+
+        <div class="card community-section__image-card reveal reveal--right">
+          <span class="code-sample__container--image">
+            <img src="./assets/yaphub-embed.png" alt="YapHub room controls and command buttons"
+              class="command-list__image community-section__image" />
+          </span>
+        </div>
+      </section>
+
+      <section id="permissions" class="page-section page-section--split reveal-stagger">
+        <div class="card">
+          <h2 class="card__heading">Permissions, not admin keys.</h2>
+          <p class="card__text u-muted">YapHub asks for voice and channel-management permissions so it can create
+            temporary rooms, move members, and remove rooms later. It should not need full Administrator access.</p>
+        </div>
+
+        <div class="card permissions-card">
+          <div class="permissions-ticker">
+            <div class="permissions-row permissions-row--left">
+              <div class="permissions-track">
+                <div class="permissions-group">
+                  <span class="permissions__item">Manage Channels</span>
+                  <span class="permissions__item">Move Members</span>
+                  <span class="permissions__item">View Channels</span>
+                  <span class="permissions__item">Connect</span>
+                </div>
+
+                <div class="permissions-group" aria-hidden="true">
+                  <span class="permissions__item">Manage Channels</span>
+                  <span class="permissions__item">Move Members</span>
+                  <span class="permissions__item">View Channels</span>
+                  <span class="permissions__item">Connect</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="permissions-row permissions-row--right">
+              <div class="permissions-track">
+                <div class="permissions-group">
+                  <span class="permissions__item">Speak</span>
+                  <span class="permissions__item">Send Messages</span>
+                  <span class="permissions__item">Read Message History</span>
+                  <span class="permissions__item">Slash Commands</span>
+                </div>
+
+                <div class="permissions-group" aria-hidden="true">
+                  <span class="permissions__item">Speak</span>
+                  <span class="permissions__item">Send Messages</span>
+                  <span class="permissions__item">Read Message History</span>
+                  <span class="permissions__item">Slash Commands</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="page-section card card--cta reveal">
+        <h2 class="card__heading">Built narrow on purpose.</h2>
+        <p class="card__text u-muted">YapHub is not trying to be a mega-bot. It focuses on temporary voice channels,
+          category-scoped join lobbies, and keeping Discord servers from turning into permanent voice-channel soup.</p>
+        <div class="button-row">
+          <a class="button button--primary"
+            href="https://discord.com/oauth2/authorize?client_id=1503456577666154506&permissions=277311728656&integration_type=0&scope=applications.commands+bot">Add
+            YapHub to Discord</a>
+        </div>
+      </section>
+    </main>
+    <footer class="site-footer reveal">
+      <span class="site-footer__item">YapHub by Diese Tech</span>
+      <span class="site-footer__item">Temporary voice channels for cleaner Discord communities.</span>
+    </footer>
+  </div>
+  <script>
+    fetch('./stats.json', { cache: 'no-store' })
+      .then((response) => response.ok ? response.json() : Promise.reject())
+      .then((stats) => {
+        document.getElementById('guild-count').textContent = Number.isFinite(stats.guildCount) ? stats.guildCount.toLocaleString() : '0';
+        document.getElementById('rooms-created').textContent = Number.isFinite(stats.tempRoomsCreated) ? stats.tempRoomsCreated.toLocaleString() : '0';
+        document.getElementById('stats-updated').textContent = stats.updatedAt ? `Updated ${new Date(stats.updatedAt).toLocaleDateString()}` : 'Live stats source ready';
+      })
+      .catch(() => {
+        document.getElementById('guild-count').textContent = '—';
+        document.getElementById('rooms-created').textContent = '—';
+        document.getElementById('stats-updated').textContent = 'Stats unavailable';
+      });
+  </script>
+
+  <script>
+    const revealElements = document.querySelectorAll('.reveal, .reveal-stagger');
+
+    const revealObserver = new IntersectionObserver(
+      (entries, observer) => {
+        entries.forEach((entry) => {
+          if (!entry.isIntersecting) return;
+
+          entry.target.classList.add('is-visible');
+          observer.unobserve(entry.target);
+        });
+      },
+      {
+        threshold: 0.14,
+        rootMargin: '0px 0px -50px 0px'
+      }
+    );
+
+    revealElements.forEach((element) => {
+      revealObserver.observe(element);
+    });
+  </script>
+
+</body>
+
+</html>
