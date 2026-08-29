@@ -7,6 +7,7 @@ YapHub itself can no longer see or clean up.
 
 from __future__ import annotations
 
+import types
 from unittest.mock import AsyncMock, Mock
 
 import discord
@@ -76,6 +77,50 @@ async def test_hide_allows_the_bot_before_denying_everyone(guild):
 
     targets = _written_targets(applied)
     assert targets.index(guild.me) < targets.index(guild.default_role)
+
+
+def _forbidden_channel(guild, *, members=()):
+    """A channel where every set_permissions call 403s -- what YapHub sees
+    when it is missing Manage Roles, or when the room's category denies it
+    Manage Permissions."""
+    channel, applied = _recording_channel(guild, members=members)
+
+    async def _forbidden(target, *, overwrite=None, reason=None):
+        applied.append((target, overwrite))
+        raise discord.Forbidden(
+            types.SimpleNamespace(status=403, reason="Forbidden"), "Missing Permissions"
+        )
+
+    channel.set_permissions = AsyncMock(side_effect=_forbidden)
+    return channel, applied
+
+
+async def test_hide_aborts_before_denying_everyone_when_writes_are_forbidden(guild):
+    # The failure mode that matters is not "hide didn't work" -- it is "hide
+    # half-worked": @everyone denied, the bot's allow never written, and a
+    # room nothing can see or clean up. Writing the bot's allow first means a
+    # permission failure aborts before anything is denied, so the room is
+    # simply left alone and the panel's on_error explains why.
+    owner = make_member(1, guild)
+    channel, applied = _forbidden_channel(guild, members=[owner])
+
+    with pytest.raises(discord.Forbidden):
+        await hide_temp_channel(channel, reason="test", owner=owner)
+
+    assert _written_targets(applied) == [guild.me]  # one attempt, nothing after
+    assert channel.overwrites == {}
+    assert not is_hidden(channel)
+
+
+async def test_lock_aborts_before_denying_everyone_when_writes_are_forbidden(guild):
+    owner = make_member(1, guild)
+    channel, applied = _forbidden_channel(guild, members=[owner])
+
+    with pytest.raises(discord.Forbidden):
+        await lock_temp_channel(channel, reason="test", owner=owner)
+
+    assert _written_targets(applied) == [guild.me]
+    assert not is_locked(channel)
 
 
 async def test_lock_gives_the_bot_an_explicit_connect_allow(guild):

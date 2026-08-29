@@ -346,7 +346,10 @@ async def test_state_action_replies_via_followup_after_deferring(guild, action, 
     ):
         await action(bot, interaction, channel)
 
-    interaction.response.defer.assert_awaited_once_with(ephemeral=True)
+    # thinking=True matters: without it a component defer becomes
+    # deferred_message_update and the ephemeral flag is dropped, leaving the
+    # button silent while the permission writes run.
+    interaction.response.defer.assert_awaited_once_with(ephemeral=True, thinking=True)
     interaction.response.send_message.assert_not_called()
     interaction.followup.send.assert_awaited_once_with(message, ephemeral=True)
 
