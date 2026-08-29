@@ -32,7 +32,15 @@ def repo_root() -> Path:
     return REPO_ROOT
 
 
-def make_guild(guild_id: int = 1000, *, name: str = "Test Guild") -> Mock:
+BOT_MEMBER_ID = 777000
+
+
+def make_guild(
+    guild_id: int = 1000,
+    *,
+    name: str = "Test Guild",
+    bot_member_id: int = BOT_MEMBER_ID,
+) -> Mock:
     guild = Mock(spec=discord.Guild)
     guild.id = guild_id
     guild.name = name
@@ -42,6 +50,10 @@ def make_guild(guild_id: int = 1000, *, name: str = "Test Guild") -> Mock:
     guild.get_member = Mock(return_value=None)
     guild.get_channel = Mock(return_value=None)
     guild.create_voice_channel = AsyncMock()
+    # guild.me is YapHub's own member object. It is not a voice member of any
+    # room, so lock/hide have to give it an explicit overwrite or the
+    # @everyone deny locks the bot out of the room it is managing.
+    guild.me = make_member(bot_member_id, guild, is_bot=True, display_name="YapHub")
     return guild
 
 
@@ -103,7 +115,22 @@ def make_response(*, is_done: bool = False) -> Mock:
     response.send_message = AsyncMock()
     response.send_modal = AsyncMock()
     response.edit_message = AsyncMock()
-    response.is_done = Mock(return_value=is_done)
+
+    # Mirrors the real object: once the interaction has been acknowledged --
+    # by defer() or by send_message() -- is_done() flips and further replies
+    # have to go through followup. Tests for the deferred room actions depend
+    # on that transition being modelled rather than pinned to a constant.
+    state = {"done": is_done}
+    response.is_done = Mock(side_effect=lambda: state["done"])
+
+    def _acknowledge(*args, **kwargs) -> None:
+        state["done"] = True
+
+    async def _defer(*args, **kwargs) -> None:
+        _acknowledge()
+
+    response.defer = AsyncMock(side_effect=_defer)
+    response.send_message.side_effect = _acknowledge
     return response
 
 

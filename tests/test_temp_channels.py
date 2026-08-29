@@ -241,3 +241,73 @@ async def test_create_temp_room_lock_evicted_after_concurrent_calls():
         )
 
     assert bot.user_creation_locks == {}
+
+
+# --- an unfetchable channel is not proof the room is gone -----------------
+
+
+def _forbidden() -> discord.Forbidden:
+    return discord.Forbidden(
+        types.SimpleNamespace(status=403, reason="Forbidden"), "Missing Access"
+    )
+
+
+def _server_error() -> discord.HTTPException:
+    return discord.HTTPException(
+        types.SimpleNamespace(status=503, reason="Service Unavailable"), "boom"
+    )
+
+
+@pytest.mark.parametrize("error", [_forbidden(), _server_error()])
+async def test_reconcile_keeps_record_when_channel_cannot_be_fetched(error):
+    # A 403 is what a hidden room looks like to a bot that was denied
+    # View Channel; a 5xx is just a bad minute for the API. Deleting the
+    # record on either untracks a live room permanently -- cleanup stops
+    # firing for it and it outlives everyone in it.
+    row = _row()
+    guild = make_guild(1)
+    guild.get_channel = Mock(return_value=None)
+    bot = _make_bot(guild=guild, fetch_channel=AsyncMock(side_effect=error))
+    bot.storage.list_active_temp_channels = AsyncMock(return_value=[row])
+
+    await reconcile_active_temp_channels(bot)
+
+    bot.storage.delete_active_temp_channel.assert_not_called()
+    assert bot.active_temp_channel_ids == {500}
+
+
+async def test_create_temp_room_aborts_when_existing_room_cannot_be_confirmed_gone():
+    # Creating a second room here would fire `insert or replace` over the
+    # first room's record and orphan it.
+    guild = make_guild(1)
+    member = make_member(7, guild)
+    lobby = make_voice_channel(100, guild, category=None)
+
+    storage = types.SimpleNamespace(
+        get_active_temp_channel_by_owner=AsyncMock(return_value={"channel_id": "500"}),
+        get_guild_config=AsyncMock(return_value=None),
+        create_active_temp_channel=AsyncMock(),
+        delete_active_temp_channel=AsyncMock(),
+        set_panel_message_id=AsyncMock(),
+    )
+    bot = types.SimpleNamespace(
+        storage=storage,
+        active_temp_channel_ids={500},
+        user_creation_locks={},
+        get_guild=Mock(return_value=guild),
+        fetch_channel=AsyncMock(side_effect=_forbidden()),
+    )
+
+    profile = {
+        "id": "profile-1",
+        "target_category_id": None,
+        "default_user_limit": None,
+        "temp_name_template": None,
+    }
+
+    with patch("services.temp_channels.notify_duplicate_room", new=AsyncMock()):
+        await create_temp_room(bot, member, lobby, profile)
+
+    guild.create_voice_channel.assert_not_called()
+    storage.delete_active_temp_channel.assert_not_called()
+    assert bot.active_temp_channel_ids == {500}

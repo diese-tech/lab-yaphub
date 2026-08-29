@@ -7,8 +7,13 @@ YapHub is a focused Discord bot for VoiceMaster-style temporary voice channels. 
 Use this invite link to add YapHub to a Discord server:
 
 ```text
-https://discord.com/oauth2/authorize?client_id=1503456577666154506&permissions=277045382224&integration_type=0&scope=bot+applications.commands
+https://discord.com/oauth2/authorize?client_id=1503456577666154506&permissions=277313817680&integration_type=0&scope=bot+applications.commands
 ```
+
+If YapHub was invited with an older link, re-invite it with this one (or add
+Manage Roles to its role): editing channel permission overwrites requires
+Manage Roles, and lock, unlock, hide, unhide, permit and block are all built
+on channel permission overwrites.
 
 The invite URL only adds the bot to a server. The running bot service still needs `DISCORD_TOKEN` configured in its environment.
 
@@ -83,12 +88,19 @@ If a user already owns an active room in the same guild, YapHub does not create 
 Recommended bot permissions:
 
 - Manage Channels
+- Manage Roles (required to edit channel permission overwrites, which is what
+  lock/unlock, hide/unhide, permit and block are made of)
 - Move Members
 - View Channels
 - Connect
 - Speak
 - Send Messages
 - Read Message History
+
+YapHub does not need Administrator, so a channel-level `@everyone` deny applies
+to the bot as well. Hiding or locking a room therefore always writes YapHub its
+own allow overwrite first — without it the bot would lose sight of the room it
+is managing, and the room would survive its last member.
 
 OAuth scopes:
 
