@@ -156,9 +156,15 @@ async def _defer(interaction: discord.Interaction) -> None:
     that budget is gone long before the last write lands, and the user gets
     "YapHub didn't respond in time" for an action that is actually applying.
     Deferring first buys the full 15-minute followup window.
+
+    `thinking=True` is required, not cosmetic sugar: on a component
+    interaction discord.py maps a plain defer to `deferred_message_update`
+    and drops the `ephemeral` flag entirely, so the button just goes quiet
+    for the seconds the writes take. With it the user gets the normal
+    "YapHub is thinking..." state, which the followup then replaces.
     """
     if not interaction.response.is_done():
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer(ephemeral=True, thinking=True)
 
 
 async def _respond(interaction: discord.Interaction, message: str) -> None:
