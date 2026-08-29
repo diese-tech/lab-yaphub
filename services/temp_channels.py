@@ -33,8 +33,24 @@ async def reconcile_active_temp_channels(bot) -> None:
         if channel is None:
             try:
                 fetched = await bot.fetch_channel(channel_id)
-            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            except discord.NotFound:
                 fetched = None
+            except (discord.Forbidden, discord.HTTPException):
+                # Only a 404 proves the room is gone. A 403 means it still
+                # exists but the bot currently can't see it (a hide that
+                # denied @everyone without allowing the bot), and a 5xx just
+                # means the API is having a bad minute. Dropping the record on
+                # either one untracks a live room permanently: cleanup stops
+                # firing for it and it outlives everyone in it. Keep it
+                # tracked and retry on the next pass.
+                logger.warning(
+                    "Could not fetch tracked temp channel %s; keeping the record "
+                    "and retrying on the next reconcile",
+                    channel_id,
+                    exc_info=True,
+                )
+                tracked_ids.add(channel_id)
+                continue
             channel = fetched if isinstance(fetched, discord.VoiceChannel) else None
 
         if not isinstance(channel, discord.VoiceChannel):
@@ -83,6 +99,15 @@ async def _backfill_panel_message(bot, guild: discord.Guild, channel: discord.Vo
         await bot.storage.set_panel_message_id(channel.id, panel_message.id)
 
 
+class UnresolvableTempChannel(Exception):
+    """The owner's recorded room could not be confirmed gone.
+
+    Raised instead of reporting "no existing room", because that answer would
+    have YapHub create a second room and overwrite the record for the first --
+    which is exactly how a live room ends up untracked and permanent.
+    """
+
+
 async def resolve_existing_owned_channel(
     bot,
     guild: discord.Guild,
@@ -98,8 +123,12 @@ async def resolve_existing_owned_channel(
     if channel is None:
         try:
             fetched = await bot.fetch_channel(channel_id)
-        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+        except discord.NotFound:
             fetched = None
+        except (discord.Forbidden, discord.HTTPException) as error:
+            # 403 (a hidden room the bot can't see) and 5xx are not proof the
+            # room is gone; see the matching branch in reconcile.
+            raise UnresolvableTempChannel(channel_id) from error
         channel = fetched if isinstance(fetched, discord.VoiceChannel) else None
 
     if not isinstance(channel, discord.VoiceChannel):
@@ -169,7 +198,18 @@ async def _create_temp_room_locked(
     lobby_channel: discord.VoiceChannel,
     profile: Mapping[str, object],
 ) -> None:
-    existing_channel = await resolve_existing_owned_channel(bot, member.guild, member.id)
+    try:
+        existing_channel = await resolve_existing_owned_channel(bot, member.guild, member.id)
+    except UnresolvableTempChannel:
+        logger.warning(
+            "Could not confirm the state of user %s's recorded room in guild %s; "
+            "skipping creation rather than orphaning it",
+            member.id,
+            member.guild.id,
+            exc_info=True,
+        )
+        return
+
     if existing_channel is not None:
         await notify_duplicate_room(bot, member, lobby_channel, existing_channel)
         return

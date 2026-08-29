@@ -222,6 +222,34 @@ class RoomControlPanel(ui.View):
     def __init__(self) -> None:
         super().__init__(timeout=None)
 
+    async def on_error(
+        self,
+        interaction: discord.Interaction,
+        error: Exception,
+        item: ui.Item,
+    ) -> None:
+        """Tell the user a button failed.
+
+        View callbacks don't go through bot.tree.error, so the default
+        on_error only logs. A room action that raises after deferring (most
+        likely a Forbidden from set_permissions when YapHub is missing Manage
+        Roles) would otherwise leave the panel spinning with no explanation.
+        """
+        logger.error(
+            "Room control panel action %s failed", getattr(item, "custom_id", item), exc_info=error
+        )
+        message = (
+            "I couldn't finish that. If this keeps happening, check that YapHub has "
+            "Manage Channels and Manage Roles on this room's category."
+        )
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(message, ephemeral=True)
+            else:
+                await interaction.response.send_message(message, ephemeral=True)
+        except (discord.Forbidden, discord.HTTPException):
+            logger.exception("Failed to report a panel action failure to the user")
+
     async def _resolve(self, interaction: discord.Interaction) -> discord.VoiceChannel | None:
         bot = interaction.client
         if not isinstance(interaction.channel, discord.VoiceChannel):
@@ -345,13 +373,27 @@ async def send_room_panel(
         return None
 
 
-async def refresh_panel_message(bot, channel: discord.VoiceChannel) -> None:
+async def refresh_panel_message(
+    bot,
+    channel: discord.VoiceChannel,
+    *,
+    locked: bool | None = None,
+    hidden: bool | None = None,
+) -> None:
     """Best-effort: re-render the panel embed (owner, lock/hide state,
     permit list) so it never goes stale after an action changes any of
     them. Never raises -- a missing/deleted message or permission issue
-    must not break the caller's response. Owner and state are always
-    re-derived here rather than passed in, so every caller gets the
-    actual current state regardless of what triggered the refresh."""
+    must not break the caller's response. Owner is always re-derived here,
+    and so is any state the caller does not pass, so a caller that only
+    changed ownership or the permit list still gets the real lock/hide
+    state.
+
+    `locked` / `hidden` exist for the callers that just changed that state:
+    `set_permissions` writes over the REST API and discord.py only updates
+    `channel.overwrites` when the resulting CHANNEL_UPDATE gateway event
+    arrives, so re-deriving here right after a hide reads the *pre-hide*
+    cache and repaints the panel as "Visible" on a room that was just
+    hidden. The caller knows what it applied; trust it over the cache."""
     record = await bot.storage.get_active_temp_channel(channel.id)
     if record is None or record["panel_message_id"] is None:
         return
@@ -364,8 +406,8 @@ async def refresh_panel_message(bot, channel: discord.VoiceChannel) -> None:
         message = await channel.fetch_message(int(record["panel_message_id"]))
         embed = build_panel_embed(
             owner,
-            locked=is_locked(channel),
-            hidden=is_hidden(channel),
+            locked=is_locked(channel) if locked is None else locked,
+            hidden=is_hidden(channel) if hidden is None else hidden,
             permitted=await permitted_members(bot, channel.guild, channel.id),
         )
         await message.edit(embed=embed)

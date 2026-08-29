@@ -146,7 +146,31 @@ async def blocked_members(bot, guild: discord.Guild, channel_id: int) -> tuple[d
     return tuple(members)
 
 
+async def _defer(interaction: discord.Interaction) -> None:
+    """Acknowledge the interaction before doing any Discord API work.
+
+    Lock/unlock/hide/unhide each issue one `set_permissions` call per target
+    -- @everyone, every role the category granted, the bot, the owner, every
+    permit, every member in the room -- and Discord only allows 3 seconds to
+    acknowledge an interaction. On any room bigger than a couple of people
+    that budget is gone long before the last write lands, and the user gets
+    "YapHub didn't respond in time" for an action that is actually applying.
+    Deferring first buys the full 15-minute followup window.
+    """
+    if not interaction.response.is_done():
+        await interaction.response.defer(ephemeral=True)
+
+
+async def _respond(interaction: discord.Interaction, message: str) -> None:
+    if interaction.response.is_done():
+        await interaction.followup.send(message, ephemeral=True)
+        return
+    await interaction.response.send_message(message, ephemeral=True)
+
+
 async def apply_lock(bot, interaction: discord.Interaction, channel: discord.VoiceChannel) -> None:
+    await _defer(interaction)
+
     owner = None
     record = await bot.storage.get_active_temp_channel(channel.id)
     if interaction.guild is not None and record is not None:
@@ -157,32 +181,35 @@ async def apply_lock(bot, interaction: discord.Interaction, channel: discord.Voi
         reason=f"YapHub lock by user {interaction.user.id}",
         owner=owner,
         extra_allowed=await permitted_members(bot, channel.guild, channel.id),
+        denied=await blocked_members(bot, channel.guild, channel.id),
     )
-    await interaction.response.send_message(
-        "Locked your Yap room.",
-        ephemeral=True,
-    )
+    await _respond(interaction, "Locked your Yap room.")
 
     from services.panel import refresh_panel_message
 
-    await refresh_panel_message(bot, channel)
+    await refresh_panel_message(bot, channel, locked=True)
     await log_admin_action(bot, interaction, channel)
 
 
 async def apply_unlock(bot, interaction: discord.Interaction, channel: discord.VoiceChannel) -> None:
-    await unlock_temp_channel(channel, reason=f"YapHub unlock by user {interaction.user.id}")
-    await interaction.response.send_message(
-        "Unlocked your Yap room.",
-        ephemeral=True,
+    await _defer(interaction)
+
+    await unlock_temp_channel(
+        channel,
+        reason=f"YapHub unlock by user {interaction.user.id}",
+        preserve=await permitted_members(bot, channel.guild, channel.id),
     )
+    await _respond(interaction, "Unlocked your Yap room.")
 
     from services.panel import refresh_panel_message
 
-    await refresh_panel_message(bot, channel)
+    await refresh_panel_message(bot, channel, locked=False)
     await log_admin_action(bot, interaction, channel)
 
 
 async def apply_hide(bot, interaction: discord.Interaction, channel: discord.VoiceChannel) -> None:
+    await _defer(interaction)
+
     owner = None
     record = await bot.storage.get_active_temp_channel(channel.id)
     if interaction.guild is not None and record is not None:
@@ -193,28 +220,29 @@ async def apply_hide(bot, interaction: discord.Interaction, channel: discord.Voi
         reason=f"YapHub hide by user {interaction.user.id}",
         owner=owner,
         extra_allowed=await permitted_members(bot, channel.guild, channel.id),
+        denied=await blocked_members(bot, channel.guild, channel.id),
     )
-    await interaction.response.send_message(
-        "Hid your Yap room. Only current members can see it.",
-        ephemeral=True,
-    )
+    await _respond(interaction, "Hid your Yap room. Only current members can see it.")
 
     from services.panel import refresh_panel_message
 
-    await refresh_panel_message(bot, channel)
+    await refresh_panel_message(bot, channel, hidden=True)
     await log_admin_action(bot, interaction, channel)
 
 
 async def apply_unhide(bot, interaction: discord.Interaction, channel: discord.VoiceChannel) -> None:
-    await unhide_temp_channel(channel, reason=f"YapHub unhide by user {interaction.user.id}")
-    await interaction.response.send_message(
-        "Your Yap room is visible again.",
-        ephemeral=True,
+    await _defer(interaction)
+
+    await unhide_temp_channel(
+        channel,
+        reason=f"YapHub unhide by user {interaction.user.id}",
+        preserve=await permitted_members(bot, channel.guild, channel.id),
     )
+    await _respond(interaction, "Your Yap room is visible again.")
 
     from services.panel import refresh_panel_message
 
-    await refresh_panel_message(bot, channel)
+    await refresh_panel_message(bot, channel, hidden=False)
     await log_admin_action(bot, interaction, channel)
 
 

@@ -127,3 +127,82 @@ async def test_refresh_panel_message_swallows_not_found(guild, notfound_factory)
     await refresh_panel_message(bot, channel)
 
     channel.fetch_message.assert_awaited_once()
+
+
+async def test_refresh_panel_message_trusts_caller_state_over_the_cache(guild):
+    # set_permissions writes over REST; discord.py only refreshes
+    # channel.overwrites when the CHANNEL_UPDATE gateway event lands. A hide
+    # that re-derived state here would read the pre-hide cache and repaint the
+    # panel as "Visible" on a room it had just hidden.
+    import discord
+
+    owner = make_member(1, guild)
+    guild.get_member = Mock(return_value=owner)
+    message = make_message(message_id=777)
+    channel = make_voice_channel(500, guild)
+    channel.fetch_message = AsyncMock(return_value=message)
+    # Stale cache: still says visible and unlocked.
+    channel.overwrites[guild.default_role] = discord.PermissionOverwrite()
+    bot = _bot_with_record({"panel_message_id": "777", "owner_user_id": "1"})
+
+    await refresh_panel_message(bot, channel, hidden=True)
+
+    _, kwargs = message.edit.call_args
+    state = next(field for field in kwargs["embed"].fields if field.name == "State")
+    assert "Hidden" in state.value
+    assert "Unlocked" in state.value  # not passed, so still derived
+
+
+async def test_refresh_panel_message_derives_state_when_caller_passes_none(guild):
+    import discord
+
+    owner = make_member(1, guild)
+    guild.get_member = Mock(return_value=owner)
+    message = make_message(message_id=777)
+    channel = make_voice_channel(500, guild)
+    channel.fetch_message = AsyncMock(return_value=message)
+    channel.overwrites[guild.default_role] = discord.PermissionOverwrite(
+        connect=False, view_channel=False
+    )
+    bot = _bot_with_record({"panel_message_id": "777", "owner_user_id": "1"})
+
+    await refresh_panel_message(bot, channel)
+
+    _, kwargs = message.edit.call_args
+    state = next(field for field in kwargs["embed"].fields if field.name == "State")
+    assert "Locked" in state.value
+    assert "Hidden" in state.value
+
+
+# --- panel button failures must not be silent -----------------------------
+
+
+async def test_panel_on_error_reports_to_the_user_after_a_defer(guild):
+    # Button callbacks don't reach bot.tree.error. A room action that raises
+    # after deferring would otherwise leave the panel spinning forever.
+    import discord
+
+    view = RoomControlPanel()
+    interaction = make_interaction(make_member(1, guild), guild)
+    await interaction.response.defer(ephemeral=True)
+
+    await view.on_error(
+        interaction,
+        discord.Forbidden(types.SimpleNamespace(status=403, reason="Forbidden"), "Missing Access"),
+        view.hide_button,
+    )
+
+    interaction.followup.send.assert_awaited_once()
+    args, kwargs = interaction.followup.send.call_args
+    assert "Manage Roles" in args[0]
+    assert kwargs == {"ephemeral": True}
+
+
+async def test_panel_on_error_reports_to_the_user_before_a_defer(guild):
+    view = RoomControlPanel()
+    interaction = make_interaction(make_member(1, guild), guild)
+
+    await view.on_error(interaction, RuntimeError("boom"), view.hide_button)
+
+    interaction.response.send_message.assert_awaited_once()
+    interaction.followup.send.assert_not_called()
