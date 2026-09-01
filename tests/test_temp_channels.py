@@ -10,6 +10,7 @@ import discord
 import pytest
 
 from services.temp_channels import create_temp_room, reconcile_active_temp_channels
+from storage import Storage
 from tests.conftest import make_guild, make_member, make_message, make_voice_channel
 
 
@@ -241,6 +242,48 @@ async def test_create_temp_room_lock_evicted_after_concurrent_calls():
         )
 
     assert bot.user_creation_locks == {}
+
+
+async def test_failed_move_and_cleanup_keeps_room_tracked_and_prevents_duplicate(tmp_path):
+    guild = make_guild(1)
+    member = make_member(7, guild)
+    lobby = make_voice_channel(100, guild, category=None)
+    created_channels = {}
+
+    async def _create_voice_channel(**kwargs):
+        channel_id = 200 + len(created_channels)
+        channel = make_voice_channel(channel_id, guild, members=[])
+        channel.delete.side_effect = _forbidden()
+        created_channels[channel_id] = channel
+        return channel
+
+    guild.create_voice_channel = AsyncMock(side_effect=_create_voice_channel)
+    guild.get_channel = Mock(side_effect=lambda channel_id: created_channels.get(channel_id))
+    member.move_to.side_effect = _forbidden()
+
+    storage = Storage(str(tmp_path / "yaphub.db"))
+    await storage.initialize()
+    bot = types.SimpleNamespace(
+        storage=storage,
+        active_temp_channel_ids=set(),
+        user_creation_locks={},
+        fetch_channel=AsyncMock(return_value=None),
+    )
+    profile = {
+        "id": "profile-1",
+        "target_category_id": None,
+        "default_user_limit": None,
+        "temp_name_template": None,
+    }
+
+    with patch("services.temp_channels.notify_duplicate_room", new=AsyncMock()):
+        await create_temp_room(bot, member, lobby, profile)
+        await create_temp_room(bot, member, lobby, profile)
+
+    guild.create_voice_channel.assert_awaited_once()
+    assert bot.active_temp_channel_ids == {200}
+    record = await storage.get_active_temp_channel(200)
+    assert record is not None
 
 
 # --- an unfetchable channel is not proof the room is gone -----------------
