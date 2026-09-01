@@ -261,6 +261,10 @@ async def _create_temp_room_locked(
             logger.exception(
                 "Failed to cleanup temp channel %s after failed move", temp_channel.id
             )
+            # The room still exists, so keep its ownership record. Dropping
+            # the record here lets the next lobby event create another room
+            # and leaves this one permanently invisible to reconciliation.
+            return
         await bot.storage.delete_active_temp_channel(temp_channel.id)
         bot.active_temp_channel_ids.discard(temp_channel.id)
         return
