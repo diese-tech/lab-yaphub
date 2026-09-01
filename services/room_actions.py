@@ -470,8 +470,11 @@ async def apply_unblock(
 
 
 async def apply_claim(bot, interaction: discord.Interaction, channel: discord.VoiceChannel) -> None:
+    # Claim is the one room action that does not go through
+    # _authorize_channel (an absent owner is the whole point), so the
+    # guild-scope check that gate performs has to be repeated here.
     record = await bot.storage.get_active_temp_channel(channel.id)
-    if record is None:
+    if record is None or int(record["guild_id"]) != channel.guild.id:
         await interaction.response.send_message(
             "That voice channel is not a tracked YapHub temp room.",
             ephemeral=True,

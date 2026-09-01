@@ -29,6 +29,24 @@ if TYPE_CHECKING:
 logger = logging.getLogger("yaphub")
 
 
+async def _rollback_lobby_channel(lobby_channel: discord.VoiceChannel) -> None:
+    """Delete a lobby YapHub just created, after its profile failed to save.
+
+    Best effort: if Discord refuses, the lobby is left in place and logged
+    rather than silently forgotten, so an admin can remove it.
+    """
+    try:
+        await lobby_channel.delete(reason="YapHub rollback: profile could not be saved")
+    except discord.NotFound:
+        return
+    except (discord.Forbidden, discord.HTTPException):
+        logger.exception(
+            "Failed to roll back lobby channel %s after a profile write failure; "
+            "it is left in the guild and must be removed manually",
+            lobby_channel.id,
+        )
+
+
 class YapGroup(app_commands.Group):
     def __init__(self, bot: "YapHubBot") -> None:
         super().__init__(name="yap", description="YapHub temp VC controls")
@@ -88,13 +106,32 @@ class YapGroup(app_commands.Group):
             )
             return
 
-        profile = await self.bot.storage.create_profile(
-            guild_id=interaction.guild.id,
-            name=profile_name,
-            join_channel_id=lobby_channel.id,
-            target_category_id=category_id,
-            created_by_user_id=interaction.user.id,
-        )
+        try:
+            profile = await self.bot.storage.create_profile(
+                guild_id=interaction.guild.id,
+                name=profile_name,
+                join_channel_id=lobby_channel.id,
+                target_category_id=category_id,
+                created_by_user_id=interaction.user.id,
+            )
+        except Exception:
+            # The lobby already exists in Discord but nothing records it, so
+            # it would sit in the server forever doing nothing. Undo the
+            # Discord side; we hold the exact channel object we just created,
+            # so this can only ever delete our own resource.
+            logger.exception(
+                "Failed to persist setup profile in guild %s; rolling back lobby %s",
+                interaction.guild.id,
+                lobby_channel.id,
+            )
+            await _rollback_lobby_channel(lobby_channel)
+            await interaction.response.send_message(
+                "I couldn't save that setup, so I removed the lobby I just created. "
+                "Please try again.",
+                ephemeral=True,
+            )
+            return
+
         self.bot.profile_cache[int(profile["join_channel_id"])] = profile
 
         await interaction.response.send_message(

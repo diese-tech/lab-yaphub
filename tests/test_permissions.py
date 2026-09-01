@@ -18,10 +18,16 @@ from services.permissions import (
     is_hidden,
     is_locked,
     lock_temp_channel,
+    missing_room_permissions,
     unhide_temp_channel,
     unlock_temp_channel,
 )
-from tests.conftest import make_member, make_voice_channel
+from tests.conftest import (
+    make_category,
+    make_member,
+    make_permissions,
+    make_voice_channel,
+)
 
 
 @pytest.fixture
@@ -279,3 +285,79 @@ async def test_hide_then_unhide_round_trips_to_an_unrestricted_channel(guild):
     # Only the bot's own allow is left behind, and it is a no-op once
     # @everyone can see the room again.
     assert channel.overwrites[guild.me].view_channel is True
+
+
+# --- temp-room permission preflight ---------------------------------------
+#
+# The production incident was a room YapHub could create but could not move
+# anyone into. missing_room_permissions answers that question before the
+# create, so there is no Discord resource to roll back at all. It is
+# deliberately fail-open: refusing to create rooms in a working server
+# because a permission could not be read would be a worse outcome than the
+# failure it prevents.
+
+
+def test_preflight_reports_nothing_missing_when_everything_is_granted(guild):
+    lobby = make_voice_channel(100, guild)
+
+    assert missing_room_permissions(guild, lobby, None) == []
+
+
+def test_preflight_reports_missing_move_members(guild):
+    lobby = make_voice_channel(100, guild, permissions=make_permissions(move_members=False))
+
+    assert missing_room_permissions(guild, lobby, None) == ["Move Members"]
+
+
+def test_preflight_reports_missing_manage_channels(guild):
+    lobby = make_voice_channel(
+        100, guild, permissions=make_permissions(manage_channels=False)
+    )
+
+    assert missing_room_permissions(guild, lobby, None) == ["Manage Channels"]
+
+
+def test_preflight_reports_both_when_both_are_missing(guild):
+    lobby = make_voice_channel(
+        100,
+        guild,
+        permissions=make_permissions(manage_channels=False, move_members=False),
+    )
+
+    assert missing_room_permissions(guild, lobby, None) == [
+        "Manage Channels",
+        "Move Members",
+    ]
+
+
+def test_preflight_checks_the_destination_category_not_just_the_lobby(guild):
+    # Move Members is resolved on the destination too, and the destination
+    # inherits the category the room is created in.
+    lobby = make_voice_channel(100, guild)
+    category = make_category(300, guild, permissions=make_permissions(move_members=False))
+
+    assert missing_room_permissions(guild, lobby, category) == ["Move Members"]
+
+
+def test_preflight_uses_the_category_for_manage_channels_when_one_is_set(guild):
+    lobby = make_voice_channel(
+        100, guild, permissions=make_permissions(manage_channels=False)
+    )
+    category = make_category(300, guild)
+
+    # The room lands in the category, so the category's grant is what counts.
+    assert missing_room_permissions(guild, lobby, category) == []
+
+
+def test_preflight_fails_open_without_a_cached_bot_member(guild):
+    guild.me = None
+    lobby = make_voice_channel(100, guild, permissions=make_permissions(move_members=False))
+
+    assert missing_room_permissions(guild, lobby, None) == []
+
+
+def test_preflight_fails_open_when_permissions_cannot_be_resolved(guild):
+    lobby = make_voice_channel(100, guild)
+    lobby.permissions_for = Mock(side_effect=AttributeError("no cached state"))
+
+    assert missing_room_permissions(guild, lobby, None) == []

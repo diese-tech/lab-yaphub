@@ -43,6 +43,34 @@ Never commit the bot token to GitHub.
 - All SQLite access runs off the event loop via `asyncio.to_thread`
 - Slash command errors are caught centrally and reported to the user instead of failing silently
 
+## Room Tracking Invariants
+
+These are the rules the temp-room lifecycle is built on. They exist because
+breaking the first one is what once left a server full of orphaned duplicate
+rooms, and they are pinned by `tests/test_incident_regression.py`.
+
+1. **A managed room that still exists is never forgotten.** If YapHub cannot
+   delete a room it created, the tracking record stays. It blocks a second
+   room for that owner and reconciliation retries the cleanup.
+2. **Tracking is removed only on proof.** Either the room was just deleted
+   successfully, or Discord answered `404 Not Found`. A `403` or a `5xx` is
+   not proof — a hidden room and an API outage both look like that.
+3. **Ownership is proved by ID, never by name.** Rooms are resolved through
+   the persisted `channel_id`/`guild_id`, so a channel that merely *looks*
+   like `<name>'s Yap` is never touched.
+4. **Every destructive step is guild-scoped.** A record from one guild can
+   never resolve to a channel in another.
+5. **Repeating an action cannot amplify a failure.** Duplicate voice events,
+   repeated lobby joins and repeated cleanup or reconciliation passes are all
+   idempotent.
+
+Before creating a room, YapHub also preflights its effective Move Members and
+Manage Channels permissions on the lobby and the destination category, and
+skips creation (with an actionable log line) instead of creating a room it
+cannot move anyone into. The preflight is a guard, not a guarantee: Discord
+resolves permissions server-side and can still refuse, so the rollback paths
+above remain the real safety net.
+
 ## Product Direction
 
 YapHub is intentionally narrow:
@@ -194,9 +222,29 @@ Result:
 - Restarting the bot preserves occupied rooms and cleans empty orphan rooms
 - A user with an existing occupied room is blocked from creating a second room
 
+## Startup Log Warnings
+
+Three warnings appear in production startup logs. Two are benign and one has
+been resolved; none of them relate to room management.
+
+| Warning | Verdict |
+| --- | --- |
+| `PyNaCl is not installed, voice will NOT be supported` | **Benign.** Logged unconditionally by `discord.Client.__init__`, regardless of what the bot does. It only matters for opening a voice *connection* (`VoiceChannel.connect`), which YapHub never does — it creates, edits, moves members between and deletes voice channels, all plain REST calls that need no audio codec. Installing PyNaCl purely to silence it would add a native dependency for nothing. |
+| `davey is not installed, voice will NOT be supported` | **Benign,** same source and same reasoning. |
+| `Privileged message content intent is missing` | **Resolved.** discord.py logs this when the message-content intent is off *and* a prefix-command surface exists. YapHub has no prefix commands, so the surface was the problem, not the intent: `command_prefix` is now `commands.when_mentioned` and `help_command` is `None`. The privileged intent stays **off** — YapHub reads no message content anywhere. |
+
+`tests/test_discord_configuration.py` pins all three, including a control
+test that proves the message-content warning is still detectable.
+
 ## Known Constraints
 
 - SQLite is the only persistence target in this phase
 - Voice-state events cannot send true ephemeral notices
+- **Single worker only.** Locks are `asyncio.Lock` objects held in one
+  process and SQLite lives on one Railway Volume. Running two replicas would
+  give each its own lock table and its own database, so two lobby joins could
+  create two rooms for the same owner. Scaling out requires the Postgres +
+  distributed-locking work tracked in `ROADMAP.md`, not just a replica count
+  change.
 - Fallback duplicate-room notices depend on channel messaging availability and permissions
 - Owner control commands from the earlier in-memory MVP are not part of this canonical Issue #8 pass

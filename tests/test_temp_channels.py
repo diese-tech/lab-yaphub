@@ -4,14 +4,20 @@ from __future__ import annotations
 
 import asyncio
 import types
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, Mock, patch
 
 import discord
 import pytest
 
+from config import RECONCILE_MIN_ROOM_AGE_SECONDS
 from services.temp_channels import create_temp_room, reconcile_active_temp_channels
 from storage import Storage
 from tests.conftest import make_guild, make_member, make_message, make_voice_channel
+
+
+def _iso_seconds_ago(seconds: float) -> str:
+    return (datetime.now(UTC) - timedelta(seconds=seconds)).replace(microsecond=0).isoformat()
 
 
 def _row(**overrides) -> dict:
@@ -21,6 +27,9 @@ def _row(**overrides) -> dict:
         "profile_id": "profile-1",
         "owner_user_id": "42",
         "panel_message_id": None,
+        # Old enough that reconcile treats an empty room as a real orphan;
+        # the young-room grace window has its own tests.
+        "created_at": _iso_seconds_ago(RECONCILE_MIN_ROOM_AGE_SECONDS * 10),
     }
     row.update(overrides)
     return row
@@ -46,15 +55,19 @@ def _make_bot(*, guild=None, get_guild=None, fetch_channel=None):
 # --- reconcile_active_temp_channels: stale records ----------------------
 
 
-async def test_reconcile_deletes_record_for_missing_guild():
+async def test_reconcile_keeps_record_when_guild_is_not_cached():
+    # A guild missing from the cache is not proof YapHub left it -- an outage
+    # or an incomplete startup looks identical. Deleting the record here
+    # would turn every live room in that guild into an untracked orphan the
+    # moment the guild came back, which is the incident's failure mode.
     row = _row()
     bot = _make_bot(get_guild=Mock(return_value=None))
     bot.storage.list_active_temp_channels = AsyncMock(return_value=[row])
 
     await reconcile_active_temp_channels(bot)
 
-    bot.storage.delete_active_temp_channel.assert_awaited_once_with(500)
-    assert bot.active_temp_channel_ids == set()
+    bot.storage.delete_active_temp_channel.assert_not_called()
+    assert bot.active_temp_channel_ids == {500}
 
 
 async def test_reconcile_deletes_record_for_missing_channel():

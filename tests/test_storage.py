@@ -406,3 +406,108 @@ async def test_migrate_is_a_no_op_when_columns_already_present(storage):
     # column already exists.
     await storage.initialize()
     await storage.initialize()
+
+
+# --- concurrency and the owner-uniqueness landmine -------------------------
+
+
+async def test_wal_mode_is_enabled(storage):
+    """Reconcile reads while voice events write; WAL keeps them from
+    blocking each other."""
+    import sqlite3
+
+    connection = sqlite3.connect(storage.database_path)
+    mode = connection.execute("pragma journal_mode").fetchone()[0]
+    connection.close()
+
+    assert mode.lower() == "wal"
+
+
+async def test_concurrent_writes_all_land(storage):
+    """asyncio.to_thread means several storage calls can be in flight at
+    once; without a busy timeout the losers fail with "database is locked"."""
+    import asyncio
+
+    await asyncio.gather(
+        *(
+            storage.create_active_temp_channel(
+                channel_id=1000 + index,
+                guild_id=1,
+                profile_id="profile-1",
+                owner_user_id=index,
+            )
+            for index in range(25)
+        )
+    )
+
+    assert len(await storage.list_active_temp_channels(1)) == 25
+
+
+async def test_recording_a_second_room_for_one_owner_is_logged_as_critical(storage, caplog):
+    """`insert or replace` also resolves the unique (guild_id, owner_user_id)
+    index, so it silently DELETES the owner's previous row -- orphaning a
+    live Discord channel. Callers must clear the old record first; if one
+    ever doesn't, the moment has to be visible in the logs rather than
+    invisible in the data."""
+    await storage.create_active_temp_channel(
+        channel_id=500, guild_id=1, profile_id="profile-1", owner_user_id=7
+    )
+
+    await storage.create_active_temp_channel(
+        channel_id=501, guild_id=1, profile_id="profile-1", owner_user_id=7
+    )
+
+    assert "displaced_active_room" in caplog.text
+    assert "displaced_channel=500" in caplog.text
+
+
+async def test_rewriting_the_same_room_is_not_reported_as_displacement(storage, caplog):
+    await storage.create_active_temp_channel(
+        channel_id=500, guild_id=1, profile_id="profile-1", owner_user_id=7
+    )
+    await storage.create_active_temp_channel(
+        channel_id=500, guild_id=1, profile_id="profile-1", owner_user_id=7
+    )
+
+    assert "displaced_active_room" not in caplog.text
+
+
+async def test_the_same_owner_id_in_two_guilds_does_not_collide(storage):
+    await storage.create_active_temp_channel(
+        channel_id=500, guild_id=1, profile_id="profile-1", owner_user_id=7
+    )
+    await storage.create_active_temp_channel(
+        channel_id=600, guild_id=2, profile_id="profile-2", owner_user_id=7
+    )
+
+    first = await storage.get_active_temp_channel_by_owner(1, 7)
+    second = await storage.get_active_temp_channel_by_owner(2, 7)
+
+    assert int(first["channel_id"]) == 500
+    assert int(second["channel_id"]) == 600
+
+
+async def test_deleting_a_room_clears_its_blocks_too(storage):
+    await storage.create_active_temp_channel(
+        channel_id=500, guild_id=1, profile_id="profile-1", owner_user_id=7
+    )
+    await storage.add_block(500, 9)
+
+    await storage.delete_active_temp_channel(500)
+
+    assert await storage.list_blocks(500) == []
+
+
+async def test_created_at_is_a_parseable_utc_timestamp(storage):
+    """reconcile's grace window parses this; an unparseable value would
+    silently disable it."""
+    from datetime import UTC, datetime
+
+    await storage.create_active_temp_channel(
+        channel_id=500, guild_id=1, profile_id="profile-1", owner_user_id=7
+    )
+    record = await storage.get_active_temp_channel(500)
+
+    created = datetime.fromisoformat(record["created_at"])
+    assert created.tzinfo is not None
+    assert abs((datetime.now(UTC) - created).total_seconds()) < 60

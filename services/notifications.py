@@ -31,6 +31,13 @@ async def notify_duplicate_room(
     if now < next_allowed_at:
         return
 
+    # Expired entries are dead weight in a process that runs for weeks; drop
+    # them here rather than growing one entry per member who ever hit a
+    # duplicate-room notice.
+    for key, expires_at in list(bot.notification_cooldowns.items()):
+        if expires_at <= now:
+            del bot.notification_cooldowns[key]
+
     bot.notification_cooldowns[cooldown_key] = now + cooldown_seconds
 
     message = (

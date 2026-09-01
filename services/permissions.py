@@ -1,4 +1,66 @@
+import logging
+
 import discord
+
+logger = logging.getLogger("yaphub")
+
+
+def missing_room_permissions(
+    guild: discord.Guild,
+    lobby_channel: discord.VoiceChannel,
+    category: discord.CategoryChannel | None,
+) -> list[str]:
+    """Names of the permissions YapHub needs to create a temp room and move
+    the member into it, and does not currently have.
+
+    Empty means "nothing provably missing" -- including when the bot's own
+    member object isn't cached, where guessing would be worse than trying.
+    This deliberately fails OPEN: a false positive would silently stop rooms
+    being created in a working server, which is worse than the failure this
+    preflight prevents.
+
+    It is a preflight, not a substitute for exception handling. Discord
+    resolves permissions server-side at request time and can still answer
+    403 for a request this function approved.
+    """
+    me = getattr(guild, "me", None)
+    if me is None:
+        return []
+
+    missing: list[str] = []
+
+    # Creating the room: Manage Channels where the room will land.
+    create_scope = category if category is not None else lobby_channel
+    if not _has(create_scope, me, "manage_channels"):
+        missing.append("Manage Channels")
+
+    # Moving the member: Move Members is evaluated on the source channel and
+    # on the destination. The destination does not exist yet, so its
+    # permissions are the category's (the room is created inside it).
+    move_scopes = [lobby_channel] if category is None else [lobby_channel, category]
+    if not all(_has(scope, me, "move_members") for scope in move_scopes):
+        missing.append("Move Members")
+
+    return missing
+
+
+def _has(scope, member: discord.Member, attribute: str) -> bool:
+    """Read one resolved permission, treating an unreadable scope as allowed.
+
+    Anything other than a real False (a mock, a missing attribute, a
+    discord.py object that cannot resolve permissions) must not block room
+    creation -- see the fail-open contract above.
+    """
+    permissions_for = getattr(scope, "permissions_for", None)
+    if permissions_for is None:
+        return True
+
+    try:
+        resolved = permissions_for(member)
+    except (AttributeError, TypeError):
+        return True
+
+    return getattr(resolved, attribute, True) is not False
 
 
 def require_manage_channels(interaction: discord.Interaction) -> bool:
