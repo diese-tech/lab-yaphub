@@ -1274,36 +1274,48 @@ html {
     // Set this to your deployed bot's public URL once Railway networking
     // is enabled for the service (Settings -> Networking -> Generate
     // Domain), then keep the /stats.json path as-is.
-    const STATS_ENDPOINT = 'https://REPLACE-WITH-YOUR-RAILWAY-DOMAIN/stats.json';
+    const STATS_ENDPOINT_PLACEHOLDER = 'https://REPLACE-WITH-YOUR-RAILWAY-DOMAIN/stats.json';
+    const STATS_ENDPOINT = STATS_ENDPOINT_PLACEHOLDER;
 
     const statsFreshness = document.getElementById('stats-updated');
 
-    fetch(STATS_ENDPOINT, { cache: 'no-store' })
-      .then((response) => (response.ok ? response.json() : Promise.reject(response.status)))
-      .then((stats) => {
-        document.getElementById('guild-count').textContent =
-          Number.isFinite(stats.servers_served) ? stats.servers_served.toLocaleString() : '0';
-        document.getElementById('rooms-created').textContent =
-          Number.isFinite(stats.rooms_created_total) ? stats.rooms_created_total.toLocaleString() : '0';
+    if (STATS_ENDPOINT === STATS_ENDPOINT_PLACEHOLDER) {
+      // Fail loudly and immediately rather than attempting a network
+      // request to a hostname that can never resolve: a DNS failure would
+      // surface as the exact same "Stats unavailable" text a real outage
+      // produces, which looks like a bug instead of the one-line
+      // configuration step it actually is.
+      document.getElementById('guild-count').textContent = '—';
+      document.getElementById('rooms-created').textContent = '—';
+      statsFreshness.textContent = 'Stats endpoint not configured yet';
+    } else {
+      fetch(STATS_ENDPOINT, { cache: 'no-store' })
+        .then((response) => (response.ok ? response.json() : Promise.reject(response.status)))
+        .then((stats) => {
+          document.getElementById('guild-count').textContent =
+            Number.isFinite(stats.servers_served) ? stats.servers_served.toLocaleString() : '0';
+          document.getElementById('rooms-created').textContent =
+            Number.isFinite(stats.rooms_created_total) ? stats.rooms_created_total.toLocaleString() : '0';
 
-        const asOf = stats.as_of ? new Date(stats.as_of) : null;
-        statsFreshness.textContent =
-          asOf && !Number.isNaN(asOf.getTime())
-            ? `Stats as of ${asOf.toLocaleString('en-US', {
-                month: 'long', day: 'numeric', year: 'numeric',
-                hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
-              })}`
-            : 'Stats unavailable';
-      })
-      .catch((status) => {
-        document.getElementById('guild-count').textContent = '—';
-        document.getElementById('rooms-created').textContent = '—';
-        // 503 means the bot is up but hasn't produced a first snapshot yet
-        // (a very new deploy) -- distinct from a genuine fetch/network
-        // failure, worth saying so rather than a bare "unavailable."
-        statsFreshness.textContent =
-          status === 503 ? 'Stats not published yet' : 'Stats unavailable';
-      });
+          const asOf = stats.as_of ? new Date(stats.as_of) : null;
+          statsFreshness.textContent =
+            asOf && !Number.isNaN(asOf.getTime())
+              ? `Stats as of ${asOf.toLocaleString('en-US', {
+                  month: 'long', day: 'numeric', year: 'numeric',
+                  hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
+                })}`
+              : 'Stats unavailable';
+        })
+        .catch((status) => {
+          document.getElementById('guild-count').textContent = '—';
+          document.getElementById('rooms-created').textContent = '—';
+          // 503 means the bot is up but hasn't produced a first snapshot yet
+          // (a very new deploy) -- distinct from a genuine fetch/network
+          // failure, worth saying so rather than a bare "unavailable."
+          statsFreshness.textContent =
+            status === 503 ? 'Stats not published yet' : 'Stats unavailable';
+        });
+    }
   </script>
 
   <script>
