@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
 
+import discord
 import pytest
 
 from services.temp_channels import (
@@ -139,6 +140,23 @@ async def test_a_blocked_duplicate_records_duplicate_blocked_not_room_created(en
     summary = await _summary(env)
     assert summary["rooms_created_total"] == 1
     assert summary["duplicate_blocked_total"] == 1
+
+
+async def test_a_refused_channel_creation_records_room_create_failed_and_still_raises(env):
+    """guild.create_voice_channel itself failing is the one branch with no
+    local return to attach telemetry to -- it deliberately propagates to
+    the caller (bot.py's broad except around create_temp_room) rather than
+    being swallowed here. The exception must still propagate unchanged;
+    only the telemetry gap is being closed."""
+    member = env["world"].make_member(7)
+    env["world"].guild.create_voice_channel = AsyncMock(side_effect=forbidden())
+
+    with pytest.raises(discord.Forbidden):
+        await _create(env, member)
+
+    summary = await _summary(env)
+    assert summary["room_create_failed_total"] == 1
+    assert summary["rooms_created_total"] == 0
 
 
 async def test_a_missing_permissions_refusal_records_room_create_failed(env):

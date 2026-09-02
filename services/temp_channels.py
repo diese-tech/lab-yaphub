@@ -479,12 +479,24 @@ async def _create_temp_room_locked(
     if default_limit:
         create_kwargs["user_limit"] = max(0, min(99, int(default_limit)))
 
-    temp_channel = await guild.create_voice_channel(
-        name=build_temp_channel_name(member, profile, prefix),
-        category=category,
-        reason=f"YapHub temp VC for user {member.id}",
-        **create_kwargs,
-    )
+    try:
+        temp_channel = await guild.create_voice_channel(
+            name=build_temp_channel_name(member, profile, prefix),
+            category=category,
+            reason=f"YapHub temp VC for user {member.id}",
+            **create_kwargs,
+        )
+    except (discord.Forbidden, discord.HTTPException):
+        # Deliberately re-raised, not swallowed here: the caller in bot.py
+        # already catches broadly around create_temp_room and logs
+        # voice_state create_failed, and every other exception this
+        # function can raise from a Discord call is likewise left to
+        # propagate. Only the telemetry gap is closed -- without this,
+        # room_create_failed_total silently missed every permission
+        # refusal and API outage on the create call itself, the one
+        # failure branch here with no local return to attach a record to.
+        await record_room_create_failed(bot)
+        raise
     logger.info(
         "temp_room created guild=%s member=%s lobby=%s channel=%s category=%s",
         guild.id,
