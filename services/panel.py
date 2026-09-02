@@ -15,10 +15,8 @@ from services.room_actions import (
     apply_permit,
     apply_rename,
     apply_transfer,
-    apply_unblock,
     apply_unhide,
     apply_unlock,
-    apply_unpermit,
     permitted_members,
 )
 

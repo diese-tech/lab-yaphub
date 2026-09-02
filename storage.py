@@ -1,12 +1,21 @@
 import asyncio
+import logging
 import os
 import sqlite3
 import uuid
 from collections.abc import Sequence
+from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 
 from config import DEFAULT_NOTIFICATION_COOLDOWN_SECONDS, DEFAULT_TEMP_CHANNEL_PREFIX
+
+logger = logging.getLogger("yaphub")
+
+# Storage calls run on asyncio.to_thread, so several can be in flight at once
+# and SQLite serialises writers. Without a busy timeout a concurrent writer
+# fails immediately with "database is locked" instead of waiting its turn.
+SQLITE_BUSY_TIMEOUT_SECONDS = 5.0
 
 
 def utc_now_iso() -> str:
@@ -25,8 +34,15 @@ class Storage:
         self.database_path = database_path
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.database_path)
+        connection = sqlite3.connect(
+            self.database_path, timeout=SQLITE_BUSY_TIMEOUT_SECONDS
+        )
         connection.row_factory = sqlite3.Row
+        # WAL lets the reconcile pass read while a voice event writes, instead
+        # of the two blocking each other. `with connection:` commits but does
+        # not close, so every caller wraps this in contextlib.closing.
+        connection.execute("pragma journal_mode = wal")
+        connection.execute("pragma foreign_keys = on")
         return connection
 
     async def initialize(self) -> None:
@@ -35,7 +51,7 @@ class Storage:
     def _initialize(self) -> None:
         Path(os.path.dirname(self.database_path) or ".").mkdir(parents=True, exist_ok=True)
         schema = Path(__file__).with_name("schema.sql").read_text(encoding="utf-8")
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             connection.executescript(schema)
             self._migrate(connection)
 
@@ -82,7 +98,7 @@ class Storage:
             return existing
 
         now = utc_now_iso()
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             connection.execute(
                 """
                 insert into guild_configs (
@@ -108,7 +124,7 @@ class Storage:
         return await asyncio.to_thread(self._get_guild_config, guild_id)
 
     def _get_guild_config(self, guild_id: int) -> sqlite3.Row | None:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             return connection.execute(
                 "select * from guild_configs where guild_id = ?",
                 (str(guild_id),),
@@ -119,7 +135,7 @@ class Storage:
 
     def _set_mod_log_channel(self, guild_id: int, channel_id: int | None) -> None:
         self._get_or_create_guild_config(guild_id)
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             connection.execute(
                 """
                 update guild_configs
@@ -133,7 +149,7 @@ class Storage:
         await asyncio.to_thread(self._reset_guild_configuration, guild_id)
 
     def _reset_guild_configuration(self, guild_id: int) -> None:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             connection.execute(
                 "delete from temp_vc_profiles where guild_id = ?",
                 (str(guild_id),),
@@ -178,7 +194,7 @@ class Storage:
         now = utc_now_iso()
         profile_id = str(uuid.uuid4())
 
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             connection.execute(
                 """
                 insert into temp_vc_profiles (
@@ -215,7 +231,7 @@ class Storage:
         return await asyncio.to_thread(self._get_profile, profile_id)
 
     def _get_profile(self, profile_id: str) -> sqlite3.Row | None:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             return connection.execute(
                 "select * from temp_vc_profiles where id = ?",
                 (profile_id,),
@@ -225,7 +241,7 @@ class Storage:
         return await asyncio.to_thread(self._get_profile_by_name, guild_id, name)
 
     def _get_profile_by_name(self, guild_id: int, name: str) -> sqlite3.Row | None:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             return connection.execute(
                 """
                 select * from temp_vc_profiles
@@ -244,7 +260,7 @@ class Storage:
     def _get_profile_by_join_channel(
         self, guild_id: int, join_channel_id: int
     ) -> sqlite3.Row | None:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             return connection.execute(
                 """
                 select * from temp_vc_profiles
@@ -257,7 +273,7 @@ class Storage:
         return await asyncio.to_thread(self._list_profiles, guild_id)
 
     def _list_profiles(self, guild_id: int) -> Sequence[sqlite3.Row]:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             return connection.execute(
                 """
                 select * from temp_vc_profiles
@@ -271,7 +287,7 @@ class Storage:
         return await asyncio.to_thread(self._list_all_profiles)
 
     def _list_all_profiles(self) -> Sequence[sqlite3.Row]:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             return connection.execute(
                 "select * from temp_vc_profiles order by created_at asc"
             ).fetchall()
@@ -280,7 +296,7 @@ class Storage:
         await asyncio.to_thread(self._delete_profile, profile_id)
 
     def _delete_profile(self, profile_id: str) -> None:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             connection.execute(
                 "delete from temp_vc_profiles where id = ?",
                 (profile_id,),
@@ -305,7 +321,31 @@ class Storage:
         owner_user_id: int,
     ) -> None:
         now = utc_now_iso()
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
+            # `insert or replace` also resolves the unique (guild_id,
+            # owner_user_id) index, so writing a second room for an owner who
+            # already has one silently DELETES the first room's record and
+            # orphans a live Discord channel -- the incident's failure mode.
+            # Callers are required to clear the previous record first
+            # (resolve_existing_owned_channel does); if one ever doesn't,
+            # this makes the moment loud instead of invisible.
+            displaced = connection.execute(
+                """
+                select channel_id from active_temp_channels
+                where guild_id = ? and owner_user_id = ? and channel_id != ?
+                """,
+                (str(guild_id), str(owner_user_id), str(channel_id)),
+            ).fetchall()
+            for row in displaced:
+                logger.critical(
+                    "storage displaced_active_room guild=%s owner=%s "
+                    "displaced_channel=%s new_channel=%s",
+                    guild_id,
+                    owner_user_id,
+                    row["channel_id"],
+                    channel_id,
+                )
+
             connection.execute(
                 """
                 insert or replace into active_temp_channels (
@@ -332,7 +372,7 @@ class Storage:
         return await asyncio.to_thread(self._get_active_temp_channel, channel_id)
 
     def _get_active_temp_channel(self, channel_id: int) -> sqlite3.Row | None:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             return connection.execute(
                 "select * from active_temp_channels where channel_id = ?",
                 (str(channel_id),),
@@ -348,7 +388,7 @@ class Storage:
     def _get_active_temp_channel_by_owner(
         self, guild_id: int, owner_user_id: int
     ) -> sqlite3.Row | None:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             return connection.execute(
                 """
                 select * from active_temp_channels
@@ -362,7 +402,7 @@ class Storage:
         return await asyncio.to_thread(self._list_active_temp_channels, guild_id)
 
     def _list_active_temp_channels(self, guild_id: int | None = None) -> Sequence[sqlite3.Row]:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             if guild_id is None:
                 return connection.execute(
                     "select * from active_temp_channels order by created_at asc"
@@ -383,7 +423,7 @@ class Storage:
         )
 
     def _transfer_active_temp_channel_owner(self, channel_id: int, owner_user_id: int) -> None:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             connection.execute(
                 """
                 update active_temp_channels
@@ -397,7 +437,7 @@ class Storage:
         await asyncio.to_thread(self._delete_active_temp_channel, channel_id)
 
     def _delete_active_temp_channel(self, channel_id: int) -> None:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             connection.execute(
                 "delete from active_temp_channels where channel_id = ?",
                 (str(channel_id),),
@@ -415,7 +455,7 @@ class Storage:
         await asyncio.to_thread(self._add_permit, channel_id, user_id)
 
     def _add_permit(self, channel_id: int, user_id: int) -> None:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             connection.execute(
                 """
                 insert or ignore into temp_channel_permits (channel_id, user_id, created_at)
@@ -428,7 +468,7 @@ class Storage:
         await asyncio.to_thread(self._remove_permit, channel_id, user_id)
 
     def _remove_permit(self, channel_id: int, user_id: int) -> None:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             connection.execute(
                 "delete from temp_channel_permits where channel_id = ? and user_id = ?",
                 (str(channel_id), str(user_id)),
@@ -438,7 +478,7 @@ class Storage:
         return await asyncio.to_thread(self._list_permits, channel_id)
 
     def _list_permits(self, channel_id: int) -> Sequence[sqlite3.Row]:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             return connection.execute(
                 """
                 select * from temp_channel_permits
@@ -452,7 +492,7 @@ class Storage:
         await asyncio.to_thread(self._add_block, channel_id, user_id)
 
     def _add_block(self, channel_id: int, user_id: int) -> None:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             connection.execute(
                 """
                 insert or ignore into temp_channel_blocks (channel_id, user_id, created_at)
@@ -465,7 +505,7 @@ class Storage:
         await asyncio.to_thread(self._remove_block, channel_id, user_id)
 
     def _remove_block(self, channel_id: int, user_id: int) -> None:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             connection.execute(
                 "delete from temp_channel_blocks where channel_id = ? and user_id = ?",
                 (str(channel_id), str(user_id)),
@@ -475,7 +515,7 @@ class Storage:
         return await asyncio.to_thread(self._list_blocks, channel_id)
 
     def _list_blocks(self, channel_id: int) -> Sequence[sqlite3.Row]:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             return connection.execute(
                 """
                 select * from temp_channel_blocks
@@ -489,7 +529,7 @@ class Storage:
         await asyncio.to_thread(self._touch_active_temp_channel, channel_id)
 
     def _touch_active_temp_channel(self, channel_id: int) -> None:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             connection.execute(
                 """
                 update active_temp_channels
@@ -503,7 +543,7 @@ class Storage:
         await asyncio.to_thread(self._set_panel_message_id, channel_id, message_id)
 
     def _set_panel_message_id(self, channel_id: int, message_id: int) -> None:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             connection.execute(
                 """
                 update active_temp_channels

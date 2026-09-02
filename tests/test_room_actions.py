@@ -137,8 +137,24 @@ async def test_apply_transfer_admin_override_logs_with_pre_transfer_owner(guild)
 # --- apply_claim --------------------------------------------------------
 
 
-def _record(owner_id: int) -> dict:
-    return {"owner_user_id": str(owner_id)}
+def _record(owner_id: int, guild_id: int = 1) -> dict:
+    # guild_id is part of every real active_temp_channels row and apply_claim
+    # checks it, so the fixture carries it rather than a partial row.
+    return {"owner_user_id": str(owner_id), "guild_id": str(guild_id)}
+
+
+async def test_apply_claim_rejects_a_record_from_another_guild(guild):
+    claimant = make_member(2, guild)
+    channel = make_voice_channel(500, guild, members=[claimant])
+    interaction = make_interaction(claimant, guild)
+    bot = _bot(get_active_temp_channel=AsyncMock(return_value=_record(1, guild_id=999)))
+
+    await apply_claim(bot, interaction, channel)
+
+    interaction.response.send_message.assert_awaited_once_with(
+        "That voice channel is not a tracked YapHub temp room.", ephemeral=True
+    )
+    bot.storage.transfer_active_temp_channel_owner.assert_not_called()
 
 
 async def test_apply_claim_untracked_channel_denied(guild):

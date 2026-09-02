@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 from collections.abc import Mapping
@@ -36,8 +37,21 @@ class YapHubBot(commands.Bot):
         intents.voice_states = True
         intents.guilds = True
         intents.members = True
+        # message_content stays off deliberately. YapHub reads no message
+        # content: every interaction is a slash command, a component, or a
+        # voice-state event. See `command_prefix` below.
 
-        super().__init__(command_prefix="!", intents=intents)
+        super().__init__(
+            # YapHub registers zero prefix commands. Keeping a literal prefix
+            # ("!") made discord.py warn on every boot that the privileged
+            # message content intent was missing -- for a command surface that
+            # does not exist. `when_mentioned` is the one prefix discord.py
+            # accepts without that warning, so the log stays honest without
+            # requesting a privileged intent YapHub has no use for.
+            command_prefix=commands.when_mentioned,
+            help_command=None,
+            intents=intents,
+        )
 
         self.storage = Storage(DATABASE_PATH)
         self.profile_cache: dict[int, Mapping[str, object]] = {}
@@ -47,6 +61,11 @@ class YapHubBot(commands.Bot):
         # create_temp_room once the last holder releases, so the dict does
         # not grow unboundedly over the process lifetime.
         self.user_creation_locks: dict[tuple[int, int], list] = {}
+        # Reconciliation runs from two places (startup and the periodic
+        # loop) and rewrites active_temp_channel_ids wholesale. Overlapping
+        # passes would race each other into deleting the same room twice and
+        # into clobbering each other's view of what is tracked.
+        self.reconcile_lock = asyncio.Lock()
         self.started_once = False
 
     async def setup_hook(self) -> None:
@@ -62,7 +81,8 @@ class YapHubBot(commands.Bot):
         self.active_temp_channel_ids = await runtime_active_channel_ids(self)
 
     async def reconcile_active_temp_channels(self) -> None:
-        await reconcile_active_temp_channels(self)
+        async with self.reconcile_lock:
+            await reconcile_active_temp_channels(self)
 
     async def create_temp_room(
         self,
@@ -106,7 +126,13 @@ async def on_ready() -> None:
     if not bot.started_once:
         await bot.tree.sync()
         await bot.load_runtime_cache()
-        await bot.reconcile_active_temp_channels()
+        try:
+            await bot.reconcile_active_temp_channels()
+        except Exception:
+            # A failed first pass must not stop the periodic loop from
+            # starting; otherwise one bad startup leaves the process with no
+            # reconciliation at all until it is redeployed.
+            logger.exception("Startup reconcile failed; the periodic loop will retry")
         if not reconcile_loop.is_running():
             reconcile_loop.start()
         bot.started_once = True
@@ -117,7 +143,27 @@ async def on_ready() -> None:
 @tasks.loop(minutes=RECONCILE_INTERVAL_MINUTES)
 async def reconcile_loop() -> None:
     await bot.wait_until_ready()
-    await bot.reconcile_active_temp_channels()
+    try:
+        await bot.reconcile_active_temp_channels()
+    except Exception:
+        # discord.ext.tasks stops a loop that raises. Reconciliation is the
+        # recovery path for rooms whose cleanup already failed once, so it
+        # must survive a bad pass and try again on the next tick.
+        logger.exception("Reconcile pass failed; the loop will retry on the next tick")
+
+
+@reconcile_loop.error
+async def on_reconcile_loop_error(error: BaseException) -> None:
+    """Last resort: restart the loop if it ever does stop.
+
+    The body above swallows its own failures, so this only fires for a
+    failure raised outside it (for example wait_until_ready during a
+    shutdown race). Without it the bot keeps running with reconciliation
+    permanently dead and no orphan ever gets cleaned up again.
+    """
+    logger.exception("Reconcile loop stopped unexpectedly; restarting", exc_info=error)
+    if not reconcile_loop.is_running():
+        reconcile_loop.restart()
 
 
 @reconcile_loop.before_loop
@@ -134,16 +180,51 @@ async def on_voice_state_update(
     if member.bot:
         return
 
-    if before.channel and before.channel.id in bot.active_temp_channel_ids:
-        await bot.cleanup_temp_channel(before.channel, leaver=member)
+    before_channel = before.channel
+    after_channel = after.channel
 
-    if after.channel and after.channel.id in bot.profile_cache:
-        profile = bot.profile_cache[after.channel.id]
-        await bot.create_temp_room(member, after.channel, profile)
+    # Discord fires this event for mute, deafen, camera and streaming changes
+    # too, where the member never moved. Treating those as a join re-ran
+    # room creation for anyone parked in a lobby -- which is how a single
+    # failed move amplified into a screen full of duplicate rooms -- and
+    # treating them as a departure revoked a still-present member's access to
+    # a locked or hidden room. Only an actual channel change is a move.
+    if before_channel is not None and before_channel == after_channel:
+        return
+
+    if before_channel is not None and before_channel.id in bot.active_temp_channel_ids:
+        try:
+            await bot.cleanup_temp_channel(before_channel, leaver=member)
+        except Exception:
+            logger.exception(
+                "voice_state cleanup_failed guild=%s member=%s channel=%s",
+                member.guild.id,
+                member.id,
+                before_channel.id,
+            )
+
+    if after_channel is not None and after_channel.id in bot.profile_cache:
+        profile = bot.profile_cache[after_channel.id]
+        try:
+            await bot.create_temp_room(member, after_channel, profile)
+        except Exception:
+            # Contained so one member's failure cannot take down the handler
+            # for everyone else. create_temp_room already rolls back or
+            # preserves tracking for every Discord failure it models; this
+            # catches the unmodelled ones and keeps them diagnosable.
+            logger.exception(
+                "voice_state create_failed guild=%s member=%s lobby=%s",
+                member.guild.id,
+                member.id,
+                after_channel.id,
+            )
 
 
-if not TOKEN:
-    raise RuntimeError("DISCORD_TOKEN is not set.")
+def main() -> None:
+    if not TOKEN:
+        raise RuntimeError("DISCORD_TOKEN is not set.")
+    bot.run(TOKEN)
 
 
-bot.run(TOKEN)
+if __name__ == "__main__":
+    main()

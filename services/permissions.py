@@ -1,4 +1,90 @@
+import logging
+
 import discord
+
+logger = logging.getLogger("yaphub")
+
+
+def missing_room_permissions(
+    guild: discord.Guild,
+    lobby_channel: discord.VoiceChannel,
+    category: discord.CategoryChannel | None,
+) -> list[str]:
+    """Names of the permissions YapHub needs to create a temp room and move
+    the member into it, and does not currently have.
+
+    Empty means "nothing provably missing" -- including when the bot's own
+    member object isn't cached, where guessing would be worse than trying.
+    This deliberately fails OPEN: a false positive would silently stop rooms
+    being created in a working server, which is worse than the failure this
+    preflight prevents.
+
+    It is a preflight, not a substitute for exception handling. Discord
+    resolves permissions server-side at request time and can still answer
+    403 for a request this function approved.
+    """
+    me = getattr(guild, "me", None)
+    if me is None:
+        return []
+
+    missing: list[str] = []
+
+    # The room YapHub is about to create does not exist yet, so "what will
+    # the destination allow" has to be answered by proxy. A room created in a
+    # category inherits that category's overwrites, so the category is the
+    # proxy. A top-level room inherits nothing from anywhere -- in particular
+    # NOT from the lobby, which is just another channel that happens to sit
+    # next to it -- so the bot's guild-level permissions are the proxy.
+    def _destination(attribute: str) -> bool:
+        if category is not None:
+            return _has(category, me, attribute)
+        return _has_at_guild_level(me, attribute)
+
+    # Creating the room.
+    if not _destination("manage_channels"):
+        missing.append("Manage Channels")
+
+    # Moving the member in. Discord evaluates Move Members on the channel the
+    # member is leaving as well as the one they are entering, and separately
+    # requires Connect on the destination: Move Members alone is not enough
+    # to place someone in a channel the bot itself could not join.
+    if not (_has(lobby_channel, me, "move_members") and _destination("move_members")):
+        missing.append("Move Members")
+
+    if not _destination("connect"):
+        missing.append("Connect")
+
+    return missing
+
+
+def _has(scope, member: discord.Member, attribute: str) -> bool:
+    """Read one resolved permission, treating an unreadable scope as allowed.
+
+    Anything other than a real False (a mock, a missing attribute, a
+    discord.py object that cannot resolve permissions) must not block room
+    creation -- see the fail-open contract above.
+    """
+    permissions_for = getattr(scope, "permissions_for", None)
+    if permissions_for is None:
+        return True
+
+    try:
+        resolved = permissions_for(member)
+    except (AttributeError, TypeError):
+        return True
+
+    return _granted(resolved, attribute)
+
+
+def _has_at_guild_level(member: discord.Member, attribute: str) -> bool:
+    """Read one of the bot's guild-wide permissions, failing open."""
+    return _granted(getattr(member, "guild_permissions", None), attribute)
+
+
+def _granted(permissions, attribute: str) -> bool:
+    if permissions is None:
+        return True
+    return getattr(permissions, attribute, True) is not False
 
 
 def require_manage_channels(interaction: discord.Interaction) -> bool:

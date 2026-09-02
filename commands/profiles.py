@@ -18,6 +18,20 @@ def build_lobby_name(_: str) -> str:
     return JOIN_TO_CREATE_NAME
 
 
+async def _rollback_lobby_channel(lobby_channel: discord.VoiceChannel) -> None:
+    """Delete a lobby YapHub just created, after its profile failed to save."""
+    try:
+        await lobby_channel.delete(reason="YapHub rollback: profile could not be saved")
+    except discord.NotFound:
+        return
+    except (discord.Forbidden, discord.HTTPException):
+        logger.exception(
+            "Failed to roll back lobby channel %s after a profile write failure; "
+            "it is left in the guild and must be removed manually",
+            lobby_channel.id,
+        )
+
+
 class ProfileGroup(app_commands.Group):
     def __init__(self, bot: "YapHubBot") -> None:
         super().__init__(name="profile", description="Manage Join to Yap profiles")
@@ -71,22 +85,52 @@ class ProfileGroup(app_commands.Group):
         if lobby_channel is not None and target_category is None:
             target_category = lobby_channel.category
 
+        # Only a lobby YapHub creates here may be rolled back. A lobby the
+        # admin passed in already existed and is not YapHub's to delete.
+        created_lobby: discord.VoiceChannel | None = None
         if lobby_channel is None:
-            lobby_channel = await guild.create_voice_channel(
-                lobby_name.strip() if lobby_name and lobby_name.strip() else build_lobby_name(name),
-                category=target_category,
-                reason=f"YapHub profile setup for {name}",
-            )
+            try:
+                lobby_channel = await guild.create_voice_channel(
+                    lobby_name.strip()
+                    if lobby_name and lobby_name.strip()
+                    else build_lobby_name(name),
+                    category=target_category,
+                    reason=f"YapHub profile setup for {name}",
+                )
+            except (discord.Forbidden, discord.HTTPException):
+                logger.exception("Failed to create profile lobby in guild %s", guild.id)
+                await interaction.response.send_message(
+                    "I could not create the lobby channel. Check my Manage Channels permission.",
+                    ephemeral=True,
+                )
+                return
+            created_lobby = lobby_channel
 
-        profile = await self.bot.storage.create_profile(
-            guild_id=guild.id,
-            name=name,
-            join_channel_id=lobby_channel.id,
-            target_category_id=target_category.id if target_category else None,
-            created_by_user_id=interaction.user.id,
-            default_user_limit=default_limit,
-            temp_name_template=name_template.strip() if name_template else None,
-        )
+        try:
+            profile = await self.bot.storage.create_profile(
+                guild_id=guild.id,
+                name=name,
+                join_channel_id=lobby_channel.id,
+                target_category_id=target_category.id if target_category else None,
+                created_by_user_id=interaction.user.id,
+                default_user_limit=default_limit,
+                temp_name_template=name_template.strip() if name_template else None,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to persist profile %r in guild %s; rolling back lobby %s",
+                name,
+                guild.id,
+                getattr(created_lobby, "id", None),
+            )
+            if created_lobby is not None:
+                await _rollback_lobby_channel(created_lobby)
+            await interaction.response.send_message(
+                "I couldn't save that profile. Nothing was configured — please try again.",
+                ephemeral=True,
+            )
+            return
+
         self.bot.profile_cache[int(profile["join_channel_id"])] = profile
 
         lines = [
