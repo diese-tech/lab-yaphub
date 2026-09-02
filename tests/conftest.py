@@ -54,7 +54,13 @@ def make_guild(
     # guild.me is YapHub's own member object. It is not a voice member of any
     # room, so lock/hide have to give it an explicit overwrite or the
     # @everyone deny locks the bot out of the room it is managing.
-    guild.me = make_member(bot_member_id, guild, is_bot=True, display_name="YapHub")
+    guild.me = make_member(
+        bot_member_id,
+        guild,
+        is_bot=True,
+        display_name="YapHub",
+        guild_permissions=make_permissions(),
+    )
     return guild
 
 
@@ -65,6 +71,7 @@ def make_member(
     manage_channels: bool = False,
     is_bot: bool = False,
     display_name: str | None = None,
+    guild_permissions: discord.Permissions | None = None,
 ) -> Mock:
     member = Mock(spec=discord.Member)
     member.id = member_id
@@ -73,8 +80,14 @@ def make_member(
     member.mention = f"<@{member_id}>"
     member.display_name = display_name or f"user{member_id}"
     member.voice = None
-    member.guild_permissions = Mock(spec=discord.Permissions)
-    member.guild_permissions.manage_channels = manage_channels
+    if guild_permissions is not None:
+        # A real Permissions object, for members whose guild-wide grants are
+        # actually read -- notably guild.me, which the temp-room preflight
+        # consults for top-level room creation.
+        member.guild_permissions = guild_permissions
+    else:
+        member.guild_permissions = Mock(spec=discord.Permissions)
+        member.guild_permissions.manage_channels = manage_channels
     member.move_to = AsyncMock()
     member.send = AsyncMock()
     return member

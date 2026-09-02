@@ -64,12 +64,22 @@ rooms, and they are pinned by `tests/test_incident_regression.py`.
    repeated lobby joins and repeated cleanup or reconciliation passes are all
    idempotent.
 
-Before creating a room, YapHub also preflights its effective Move Members and
-Manage Channels permissions on the lobby and the destination category, and
-skips creation (with an actionable log line) instead of creating a room it
-cannot move anyone into. The preflight is a guard, not a guarantee: Discord
-resolves permissions server-side and can still refuse, so the rollback paths
-above remain the real safety net.
+Before creating a room, YapHub preflights the permissions the operation
+actually needs and skips creation — with an actionable log line — rather than
+creating a room it cannot move anyone into:
+
+- **Manage Channels** and **Connect** where the room will land. The room does
+  not exist yet, so this is resolved against the destination category, or
+  against YapHub's guild-wide permissions for a top-level room (which inherits
+  nothing from the lobby next to it). Connect matters on its own: Move Members
+  does not let the bot place someone in a channel it could not join itself.
+- **Move Members** on the lobby the member is leaving *and* on the destination.
+
+The preflight fails **open** — an unreadable permission never blocks creation,
+because silently refusing to make rooms in a working server would be worse than
+the failure it prevents. It is a guard, not a guarantee: Discord resolves
+permissions server-side and can still refuse, so the rollback paths above
+remain the real safety net.
 
 ## Product Direction
 

@@ -29,17 +29,30 @@ def missing_room_permissions(
 
     missing: list[str] = []
 
-    # Creating the room: Manage Channels where the room will land.
-    create_scope = category if category is not None else lobby_channel
-    if not _has(create_scope, me, "manage_channels"):
+    # The room YapHub is about to create does not exist yet, so "what will
+    # the destination allow" has to be answered by proxy. A room created in a
+    # category inherits that category's overwrites, so the category is the
+    # proxy. A top-level room inherits nothing from anywhere -- in particular
+    # NOT from the lobby, which is just another channel that happens to sit
+    # next to it -- so the bot's guild-level permissions are the proxy.
+    def _destination(attribute: str) -> bool:
+        if category is not None:
+            return _has(category, me, attribute)
+        return _has_at_guild_level(me, attribute)
+
+    # Creating the room.
+    if not _destination("manage_channels"):
         missing.append("Manage Channels")
 
-    # Moving the member: Move Members is evaluated on the source channel and
-    # on the destination. The destination does not exist yet, so its
-    # permissions are the category's (the room is created inside it).
-    move_scopes = [lobby_channel] if category is None else [lobby_channel, category]
-    if not all(_has(scope, me, "move_members") for scope in move_scopes):
+    # Moving the member in. Discord evaluates Move Members on the channel the
+    # member is leaving as well as the one they are entering, and separately
+    # requires Connect on the destination: Move Members alone is not enough
+    # to place someone in a channel the bot itself could not join.
+    if not (_has(lobby_channel, me, "move_members") and _destination("move_members")):
         missing.append("Move Members")
+
+    if not _destination("connect"):
+        missing.append("Connect")
 
     return missing
 
@@ -60,7 +73,18 @@ def _has(scope, member: discord.Member, attribute: str) -> bool:
     except (AttributeError, TypeError):
         return True
 
-    return getattr(resolved, attribute, True) is not False
+    return _granted(resolved, attribute)
+
+
+def _has_at_guild_level(member: discord.Member, attribute: str) -> bool:
+    """Read one of the bot's guild-wide permissions, failing open."""
+    return _granted(getattr(member, "guild_permissions", None), attribute)
+
+
+def _granted(permissions, attribute: str) -> bool:
+    if permissions is None:
+        return True
+    return getattr(permissions, attribute, True) is not False
 
 
 def require_manage_channels(interaction: discord.Interaction) -> bool:

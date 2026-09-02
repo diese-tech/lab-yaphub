@@ -153,6 +153,41 @@ async def test_missing_manage_channels_in_the_target_category_refuses(env):
     assert _rooms(env) == set()
 
 
+async def test_a_destination_that_denies_connect_creates_no_room(env, caplog):
+    """Move Members alone does not let the bot place someone in a channel.
+
+    Without the Connect check this reached create-then-403 -- the exact path
+    the preflight exists to avoid, and the one that leaves a tracked
+    unusable room when the rollback delete also fails.
+    """
+    category = make_category(
+        300, env["world"].guild, permissions=make_permissions(connect=False)
+    )
+    env["world"].guild.get_channel = Mock(
+        side_effect=lambda cid: category if cid == 300 else env["world"].get_channel(cid)
+    )
+    member = env["world"].make_member(7)
+
+    await _create(env, member, profile=make_profile(target_category_id=300))
+
+    assert _rooms(env) == set()
+    assert await env["storage"].list_active_temp_channels() == []
+    assert "Connect" in caplog.text
+
+
+async def test_a_lobby_overwrite_does_not_block_a_top_level_room(env):
+    """A top-level room inherits nothing from the lobby, so a channel
+    overwrite there must not stop creation in a working server."""
+    env["lobby"].permissions_for = Mock(
+        return_value=make_permissions(manage_channels=False, connect=False)
+    )
+    member = env["world"].make_member(7)
+
+    await _create(env, member)
+
+    assert len(_rooms(env)) == 1
+
+
 async def test_preflight_fails_open_when_the_bot_member_is_not_cached(env):
     """An unknown answer must never be treated as "no permission"."""
     env["world"].guild.me = None

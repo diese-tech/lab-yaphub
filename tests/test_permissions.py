@@ -303,30 +303,29 @@ def test_preflight_reports_nothing_missing_when_everything_is_granted(guild):
     assert missing_room_permissions(guild, lobby, None) == []
 
 
-def test_preflight_reports_missing_move_members(guild):
+def test_preflight_reports_missing_move_members_on_the_source_lobby(guild):
     lobby = make_voice_channel(100, guild, permissions=make_permissions(move_members=False))
 
     assert missing_room_permissions(guild, lobby, None) == ["Move Members"]
 
 
 def test_preflight_reports_missing_manage_channels(guild):
-    lobby = make_voice_channel(
-        100, guild, permissions=make_permissions(manage_channels=False)
-    )
+    guild.me.guild_permissions = make_permissions(manage_channels=False)
+    lobby = make_voice_channel(100, guild)
 
     assert missing_room_permissions(guild, lobby, None) == ["Manage Channels"]
 
 
-def test_preflight_reports_both_when_both_are_missing(guild):
-    lobby = make_voice_channel(
-        100,
-        guild,
-        permissions=make_permissions(manage_channels=False, move_members=False),
+def test_preflight_reports_every_missing_permission(guild):
+    guild.me.guild_permissions = make_permissions(
+        manage_channels=False, move_members=False, connect=False
     )
+    lobby = make_voice_channel(100, guild)
 
     assert missing_room_permissions(guild, lobby, None) == [
         "Manage Channels",
         "Move Members",
+        "Connect",
     ]
 
 
@@ -347,6 +346,50 @@ def test_preflight_uses_the_category_for_manage_channels_when_one_is_set(guild):
 
     # The room lands in the category, so the category's grant is what counts.
     assert missing_room_permissions(guild, lobby, category) == []
+
+
+def test_preflight_requires_connect_on_the_destination_category(guild):
+    """Move Members alone does not let the bot place someone in a channel.
+
+    Discord also requires Connect on the destination, so a category that
+    denies the bot Connect produces exactly the 403-on-move the preflight
+    exists to get ahead of.
+    """
+    lobby = make_voice_channel(100, guild)
+    category = make_category(300, guild, permissions=make_permissions(connect=False))
+
+    assert missing_room_permissions(guild, lobby, category) == ["Connect"]
+
+
+def test_preflight_requires_connect_for_a_top_level_room(guild):
+    guild.me.guild_permissions = make_permissions(connect=False)
+    lobby = make_voice_channel(100, guild)
+
+    assert missing_room_permissions(guild, lobby, None) == ["Connect"]
+
+
+def test_a_lobby_overwrite_does_not_block_creating_a_top_level_room(guild):
+    """A top-level room inherits nothing from the lobby.
+
+    The lobby is just another channel that happens to sit next to it, so a
+    channel overwrite there says nothing about whether Discord will accept
+    the create. Scoping the check to the lobby made this a false positive
+    that would silently stop every room in an otherwise working server.
+    """
+    lobby = make_voice_channel(
+        100, guild, permissions=make_permissions(manage_channels=False, connect=False)
+    )
+
+    # Move Members is still read on the lobby -- that one really is resolved
+    # on the source channel -- but creation and destination access are not.
+    assert missing_room_permissions(guild, lobby, None) == []
+
+
+def test_preflight_falls_open_when_guild_permissions_are_unreadable(guild):
+    del guild.me.guild_permissions
+    lobby = make_voice_channel(100, guild)
+
+    assert missing_room_permissions(guild, lobby, None) == []
 
 
 def test_preflight_fails_open_without_a_cached_bot_member(guild):
