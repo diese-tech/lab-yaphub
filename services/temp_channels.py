@@ -16,6 +16,14 @@ from services.permissions import (
     revoke_member_overwrites,
 )
 from services.room_actions import clear_rename_history, permitted_members
+from services.telemetry import (
+    record_duplicate_blocked,
+    record_reconcile_cleanup_failed,
+    record_reconcile_cleanup_ok,
+    record_rollback_failed_tracking_preserved,
+    record_room_create_failed,
+    record_room_created,
+)
 
 logger = logging.getLogger("yaphub")
 
@@ -248,6 +256,7 @@ async def _reconcile_row(bot, row, channel_id: int) -> bool:
                 guild.id,
                 channel_id,
             )
+            await record_reconcile_cleanup_ok(bot)
             return False
 
         # Cleanup failed again. The room still exists, so it stays tracked
@@ -257,6 +266,7 @@ async def _reconcile_row(bot, row, channel_id: int) -> bool:
             guild.id,
             channel_id,
         )
+        await record_reconcile_cleanup_failed(bot)
         return True
 
     await bot.storage.touch_active_temp_channel(channel_id)
@@ -404,6 +414,7 @@ async def _create_temp_room_locked(
             lobby_channel.id,
             _profile_value(profile, "guild_id"),
         )
+        await record_room_create_failed(bot)
         return
 
     try:
@@ -415,6 +426,7 @@ async def _create_temp_room_locked(
             member.id,
             exc_info=True,
         )
+        await record_room_create_failed(bot)
         return
 
     if existing_channel is not None:
@@ -424,6 +436,7 @@ async def _create_temp_room_locked(
             member.id,
             existing_channel.id,
         )
+        await record_duplicate_blocked(bot)
         await notify_duplicate_room(bot, member, lobby_channel, existing_channel)
         return
 
@@ -453,6 +466,7 @@ async def _create_temp_room_locked(
             getattr(category, "id", None),
             ",".join(missing),
         )
+        await record_room_create_failed(bot)
         return
 
     guild_config = await bot.storage.get_guild_config(guild.id)
@@ -514,6 +528,7 @@ async def _create_temp_room_locked(
                 member.id,
                 temp_channel.id,
             )
+        await record_room_create_failed(bot)
         return
 
     bot.active_temp_channel_ids.add(temp_channel.id)
@@ -539,6 +554,7 @@ async def _create_temp_room_locked(
             await bot.storage.delete_active_temp_channel(temp_channel.id)
             bot.active_temp_channel_ids.discard(temp_channel.id)
             clear_rename_history(temp_channel.id)
+            await record_room_create_failed(bot)
             return
 
         # The room still exists, so keep its ownership record. Dropping
@@ -551,7 +567,10 @@ async def _create_temp_room_locked(
             member.id,
             temp_channel.id,
         )
+        await record_rollback_failed_tracking_preserved(bot)
         return
+
+    await record_room_created(bot, guild.id, member.id)
 
     panel_message = await send_room_panel(temp_channel, member)
     if panel_message is not None:

@@ -55,3 +55,32 @@ create table if not exists temp_channel_blocks (
   created_at text not null,
   primary key (channel_id, user_id)
 );
+
+-- Durable usage telemetry, deliberately separate from active_temp_channels:
+-- operational state answers "what exists right now" and is deleted on
+-- cleanup; these tables answer "what has happened over time" and must
+-- survive it. Bounded by calendar time (telemetry_daily_counts) or by real
+-- entity cardinality (telemetry_known_users/guilds), never by event volume,
+-- so neither needs pruning. See services/telemetry.py for the privacy
+-- boundary these tables are built around.
+
+create table if not exists telemetry_daily_counts (
+  day text not null,
+  event_type text not null,
+  count integer not null default 0,
+  primary key (day, event_type)
+);
+
+-- user_key / guild_key are HMAC-SHA256(secret, "<type>:<discord_id>") --
+-- never a raw Discord snowflake. Existence in these tables proves "this
+-- pseudonymous entity has had a room created for it at least once"; nothing
+-- here maps back to a Discord id without the server-side secret.
+create table if not exists telemetry_known_users (
+  user_key text primary key,
+  first_seen_at text not null
+);
+
+create table if not exists telemetry_known_guilds (
+  guild_key text primary key,
+  first_seen_at text not null
+);
