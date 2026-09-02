@@ -162,14 +162,77 @@ async def test_duplicate_join_storm_across_every_guild_blocks_every_extra_attemp
     assert bot.user_creation_locks == {}
 
 
-async def test_reconcile_running_concurrently_with_load_does_not_reap_live_rooms(world):
-    """The mid-creation-reap hazard, at scale.
+async def test_reconcile_does_not_reap_rooms_still_in_the_post_persist_window(world):
+    """The mid-creation reap hazard, forced and verified -- not left to
+    scheduling luck.
 
-    A reconcile pass reading a half-written creation (record exists,
-    member not yet moved in) must not delete it. Firing several reconcile
-    passes at the exact moment hundreds of creates are landing is the
-    highest-pressure version of that race this harness can produce without
-    a real Discord gateway.
+    Racing real create_temp_room calls against real reconcile passes does
+    not reliably put reconcile inside the persisted-but-not-yet-moved
+    window: asyncio.gather schedules every task's first step before any of
+    them run, but each create's first genuine suspend point is its own
+    asyncio.to_thread SQLite call, competing with reconcile's own snapshot
+    read on the same bounded executor. Depending on scheduling and thread
+    pool depth, every reconcile pass can finish its snapshot before any
+    create's write lands, or every create (including the move) can finish
+    before any reconcile starts -- either way such a test passes without
+    ever exercising the hazard, which only proves reconcile is safe when it
+    happens not to race, not when it does.
+
+    This builds the hazard directly instead, with an explicit barrier:
+    persist every member's tracking record with their Discord channel
+    deliberately left empty -- exactly what a room looks like in the few
+    milliseconds between create_active_temp_channel committing and
+    member.move_to landing -- wait for every one of those writes to
+    actually land, and only then fire many reconcile passes concurrently
+    (stressing reconcile-vs-reconcile too) against that guaranteed state.
+    """
+    multi, bot = world
+
+    persist_tasks = []
+    channels: dict[tuple[int, int], object] = {}
+    for guild_id, fake_discord in multi.worlds.items():
+        for member_index in range(MEMBERS_PER_GUILD):
+            owner_id = 5000 + member_index
+            channel_id = guild_id * 100_000 + 900 + member_index
+            channel = fake_discord.add_channel(channel_id, members=[])
+            channels[(guild_id, owner_id)] = channel
+            persist_tasks.append(
+                bot.storage.create_active_temp_channel(
+                    channel_id=channel_id,
+                    guild_id=guild_id,
+                    profile_id="profile-1",
+                    owner_user_id=owner_id,
+                )
+            )
+
+    await asyncio.gather(*persist_tasks)  # the barrier: every row now exists
+
+    for channel in channels.values():
+        assert channel.members == [], "setup bug: the hazard window must start empty"
+
+    await asyncio.gather(*(reconcile_active_temp_channels(bot) for _ in range(10)))
+
+    rows = await bot.storage.list_active_temp_channels()
+    assert len(rows) == TOTAL_MEMBERS
+    for (guild_id, owner_id), channel in channels.items():
+        assert channel.id in multi.worlds[guild_id].live_channel_ids, (
+            "reconcile reaped a room still inside its post-persist grace window "
+            f"(guild={guild_id} owner={owner_id})"
+        )
+    for guild_id in multi.worlds:
+        assert len(multi.managed_room_ids(guild_id)) == MEMBERS_PER_GUILD
+
+
+async def test_creates_and_reconcile_running_concurrently_do_not_corrupt_shared_state(world):
+    """General robustness under mixed load, honestly scoped.
+
+    This does NOT force reconcile into the narrow post-persist window --
+    that guarantee is proven deterministically above. What it adds is a
+    different, real question: with hundreds of creates and several
+    reconcile passes genuinely interleaved by the scheduler, does the
+    shared in-memory tracking set (bot.active_temp_channel_ids, rewritten
+    wholesale by every reconcile pass) end up correct regardless of how
+    the interleaving actually falls?
     """
     multi, bot = world
     create_tasks = []
