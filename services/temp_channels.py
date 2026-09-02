@@ -43,13 +43,12 @@ async def delete_managed_channel(channel: discord.VoiceChannel, reason: str) -> 
         )
         return True
     except (discord.Forbidden, discord.HTTPException) as error:
-        logger.error(
+        logger.exception(
             "temp_room delete_failed guild=%s channel=%s status=%s reason=%s",
             channel.guild.id,
             channel.id,
             getattr(error, "status", None),
             reason,
-            exc_info=True,
         )
         return False
 
@@ -522,14 +521,13 @@ async def _create_temp_room_locked(
     try:
         await member.move_to(temp_channel, reason="Moved to newly created Yap room")
     except (discord.Forbidden, discord.HTTPException) as error:
-        logger.error(
+        logger.exception(
             "temp_room move_failed guild=%s member=%s from_channel=%s to_channel=%s status=%s",
             guild.id,
             member.id,
             lobby_channel.id,
             temp_channel.id,
             getattr(error, "status", None),
-            exc_info=True,
         )
         if await delete_managed_channel(temp_channel, "Cleanup after failed move"):
             logger.info(

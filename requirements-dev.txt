@@ -1,4 +1,7 @@
 -r requirements.txt
 pytest>=8.0
 pytest-asyncio>=0.24
-ruff>=0.6
+# Upper-bounded: ruff changes its default rule set between minor versions, so
+# an unpinned range turns an unrelated release into a red CI run. ruff.toml
+# selects rules explicitly; this keeps the tool itself predictable too.
+ruff>=0.16,<0.17

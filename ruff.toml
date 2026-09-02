@@ -1,0 +1,32 @@
+# Lint configuration for YapHub.
+#
+# The rule set is listed explicitly rather than left to ruff's defaults on
+# purpose: `ruff check .` with implicit defaults reports a different set of
+# problems on every ruff release, so CI would go red on a version bump that
+# changed nothing in this repository. Pinning the selection here (and the
+# ruff version range in requirements-dev.txt) makes the gate deterministic.
+#
+# The selection is scoped to rules that catch real defects, not house style.
+# Import ordering, comprehension style and unused-unpacked-variable rules are
+# deliberately not enabled: they would demand a repo-wide restyle that would
+# bury genuine findings in noise. Add a family here when the project decides
+# to adopt it, not by inheriting whatever a new ruff turns on by default.
+
+target-version = "py311"
+line-length = 120
+
+[lint]
+select = [
+  "E",     # pycodestyle errors
+  "F",     # pyflakes: undefined names, unused imports
+  "W",     # pycodestyle warnings
+  "B",     # flake8-bugbear: real bug patterns
+  "G",     # flake8-logging-format: correct logging calls
+  "ASYNC", # flake8-async: blocking calls and async footguns
+]
+ignore = [
+  # Long lines are load-bearing here: discord.py button decorators and the
+  # embed/message strings do not read better wrapped. Reformatting them is a
+  # separate change from anything a linter should gate on.
+  "E501",
+]
