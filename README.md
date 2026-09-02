@@ -64,6 +64,29 @@ rooms, and they are pinned by `tests/test_incident_regression.py`.
    repeated lobby joins and repeated cleanup or reconciliation passes are all
    idempotent.
 
+## Load Testing
+
+`tests/test_load_stress.py` re-proves the invariants above under real
+concurrency pressure — hundreds of guilds and members firing through
+`asyncio.gather` at once against the real per-`(guild, member)` lock and the
+real SQLite storage layer (only Discord's network I/O is faked). It is not a
+separate step: it runs as part of the normal `pytest` invocation, so it
+already executes in CI on every push.
+
+Treat it as the standing question to answer whenever a change touches
+locking, storage, or the create/cleanup/reconcile paths: **does this still
+hold at scale?** If a change makes one of these tests fail, that change made
+YapHub less safe under load, whatever else it does — that failure is not a
+flake to retry past. It's mutation-tested: removing the per-user creation
+lock produces the exact `displaced_active_room` critical log the storage
+layer emits for a clobbered tracking record, and fails
+`test_duplicate_join_storm_across_every_guild_blocks_every_extra_attempt`.
+
+If a future change to the lifecycle needs a *new* concurrency invariant
+covered (a new lock, a new shared cache, a new cross-request state), add it
+here rather than starting a separate load-testing process — one file, one
+place this question gets answered, always run.
+
 Before creating a room, YapHub preflights the permissions the operation
 actually needs and skips creation — with an actionable log line — rather than
 creating a room it cannot move anyone into:
