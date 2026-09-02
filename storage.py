@@ -684,3 +684,34 @@ class Storage:
                 TELEMETRY_EVENT_RECONCILE_CLEANUP_FAILED, 0
             ),
         }
+
+    # --- public stats snapshot ------------------------------------------
+    #
+    # The one cached payload the public stats endpoint serves. `payload` is
+    # stored pre-built (already passed through the field allowlist in
+    # services/public_stats.py) so this layer never needs to know which
+    # fields are safe to expose -- it only ever stores and returns exactly
+    # what it was given.
+
+    async def save_public_stats_snapshot(self, as_of: str, payload: str) -> None:
+        await asyncio.to_thread(self._save_public_stats_snapshot, as_of, payload)
+
+    def _save_public_stats_snapshot(self, as_of: str, payload: str) -> None:
+        with closing(self._connect()) as connection, connection:
+            connection.execute(
+                """
+                insert into public_stats_snapshot (id, as_of, payload)
+                values (1, ?, ?)
+                on conflict (id) do update set as_of = excluded.as_of, payload = excluded.payload
+                """,
+                (as_of, payload),
+            )
+
+    async def get_public_stats_snapshot(self) -> sqlite3.Row | None:
+        return await asyncio.to_thread(self._get_public_stats_snapshot)
+
+    def _get_public_stats_snapshot(self) -> sqlite3.Row | None:
+        with closing(self._connect()) as connection, connection:
+            return connection.execute(
+                "select as_of, payload from public_stats_snapshot where id = 1"
+            ).fetchone()

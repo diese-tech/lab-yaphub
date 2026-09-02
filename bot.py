@@ -1,7 +1,9 @@
 import asyncio
+import datetime
 import logging
 import os
 from collections.abc import Mapping
+from zoneinfo import ZoneInfo
 
 import discord
 from discord import app_commands
@@ -9,8 +11,17 @@ from discord.ext import commands, tasks
 from dotenv import load_dotenv
 
 from commands import YapGroup
-from config import DATABASE_PATH, RECONCILE_INTERVAL_MINUTES
+from config import (
+    DATABASE_PATH,
+    RECONCILE_INTERVAL_MINUTES,
+    STATS_REFRESH_HOUR_ET,
+    STATS_REFRESH_MINUTE_ET,
+    STATS_SERVER_HOST,
+    STATS_SERVER_PORT,
+)
 from services.panel import RoomControlPanel
+from services.public_stats import refresh_public_stats_snapshot
+from services.stats_server import start_stats_server
 from services.temp_channels import (
     cleanup_temp_channel,
     create_temp_room,
@@ -67,11 +78,32 @@ class YapHubBot(commands.Bot):
         # into clobbering each other's view of what is tracked.
         self.reconcile_lock = asyncio.Lock()
         self.started_once = False
+        self.stats_server_runner: object | None = None
 
     async def setup_hook(self) -> None:
         await self.storage.initialize()
         self.tree.add_command(YapGroup(self))
         self.add_view(RoomControlPanel())
+
+        try:
+            self.stats_server_runner = await start_stats_server(
+                self, STATS_SERVER_HOST, STATS_SERVER_PORT
+            )
+        except Exception:
+            # The public stats endpoint is supplementary -- a bound-port
+            # conflict or a container without public networking must not
+            # stop the bot from logging into Discord and doing its actual
+            # job.
+            logger.exception(
+                "Failed to start the public stats server on port %s; "
+                "continuing without it",
+                STATS_SERVER_PORT,
+            )
+
+    async def close(self) -> None:
+        if self.stats_server_runner is not None:
+            await self.stats_server_runner.cleanup()
+        await super().close()
 
     async def load_runtime_cache(self) -> None:
         self.profile_cache = {
@@ -135,6 +167,14 @@ async def on_ready() -> None:
             logger.exception("Startup reconcile failed; the periodic loop will retry")
         if not reconcile_loop.is_running():
             reconcile_loop.start()
+
+        # refresh_public_stats_snapshot is already best-effort internally
+        # (see services/public_stats.py), so no try/except is needed here --
+        # unlike reconcile, a failure has no periodic-loop startup to guard.
+        await refresh_public_stats_snapshot(bot)
+        if not stats_refresh_loop.is_running():
+            stats_refresh_loop.start()
+
         bot.started_once = True
 
     logger.info("Logged in as %s (%s)", bot.user, bot.user.id if bot.user else "unknown")
@@ -169,6 +209,36 @@ async def on_reconcile_loop_error(error: BaseException) -> None:
 @reconcile_loop.before_loop
 async def before_reconcile_loop() -> None:
     await bot.wait_until_ready()
+
+
+@tasks.loop(
+    time=datetime.time(
+        hour=STATS_REFRESH_HOUR_ET,
+        minute=STATS_REFRESH_MINUTE_ET,
+        tzinfo=ZoneInfo("America/New_York"),
+    )
+)
+async def stats_refresh_loop() -> None:
+    await bot.wait_until_ready()
+    # refresh_public_stats_snapshot never raises (see services/
+    # public_stats.py) -- no try/except needed to keep this loop alive.
+    await refresh_public_stats_snapshot(bot)
+
+
+@stats_refresh_loop.before_loop
+async def before_stats_refresh_loop() -> None:
+    await bot.wait_until_ready()
+
+
+@stats_refresh_loop.error
+async def on_stats_refresh_loop_error(error: BaseException) -> None:
+    """Same rationale as on_reconcile_loop_error: the body above cannot
+    raise on its own, but a failure outside it (e.g. wait_until_ready
+    during a shutdown race) would otherwise leave the daily refresh
+    permanently dead for the rest of the process's life."""
+    logger.exception("Stats refresh loop stopped unexpectedly; restarting", exc_info=error)
+    if not stats_refresh_loop.is_running():
+        stats_refresh_loop.restart()
 
 
 @bot.event

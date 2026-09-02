@@ -680,3 +680,40 @@ async def test_telemetry_survives_a_fresh_storage_instance_over_the_same_file(st
     summary = await restarted.get_telemetry_summary()
     assert summary["rooms_created_total"] == 1
     assert summary["unique_users_served_total"] == 1
+
+
+# --- public stats snapshot ---------------------------------------------
+
+
+async def test_public_stats_snapshot_starts_absent(storage):
+    assert await storage.get_public_stats_snapshot() is None
+
+
+async def test_public_stats_snapshot_round_trips(storage):
+    await storage.save_public_stats_snapshot(as_of="2026-09-02T10:00:00-04:00", payload='{"a":1}')
+
+    row = await storage.get_public_stats_snapshot()
+
+    assert row["as_of"] == "2026-09-02T10:00:00-04:00"
+    assert row["payload"] == '{"a":1}'
+
+
+async def test_public_stats_snapshot_is_a_singleton_that_overwrites(storage):
+    """One cached snapshot, always the latest -- not a growing history."""
+    await storage.save_public_stats_snapshot(as_of="2026-09-01T10:00:00-04:00", payload='{"a":1}')
+    await storage.save_public_stats_snapshot(as_of="2026-09-02T10:00:00-04:00", payload='{"a":2}')
+
+    row = await storage.get_public_stats_snapshot()
+
+    assert row["as_of"] == "2026-09-02T10:00:00-04:00"
+    assert row["payload"] == '{"a":2}'
+
+
+async def test_public_stats_snapshot_survives_a_fresh_storage_instance(storage):
+    await storage.save_public_stats_snapshot(as_of="2026-09-02T10:00:00-04:00", payload='{"a":1}')
+
+    restarted = Storage(storage.database_path)
+    await restarted.initialize()
+
+    row = await restarted.get_public_stats_snapshot()
+    assert row["payload"] == '{"a":1}'
