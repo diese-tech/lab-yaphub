@@ -5,10 +5,19 @@ import sqlite3
 import uuid
 from collections.abc import Sequence
 from contextlib import closing
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from config import DEFAULT_NOTIFICATION_COOLDOWN_SECONDS, DEFAULT_TEMP_CHANNEL_PREFIX
+from config import (
+    DEFAULT_NOTIFICATION_COOLDOWN_SECONDS,
+    DEFAULT_TEMP_CHANNEL_PREFIX,
+    TELEMETRY_EVENT_DUPLICATE_BLOCKED,
+    TELEMETRY_EVENT_RECONCILE_CLEANUP_FAILED,
+    TELEMETRY_EVENT_RECONCILE_CLEANUP_OK,
+    TELEMETRY_EVENT_ROLLBACK_FAILED_TRACKING_PRESERVED,
+    TELEMETRY_EVENT_ROOM_CREATE_FAILED,
+    TELEMETRY_EVENT_ROOM_CREATED,
+)
 
 logger = logging.getLogger("yaphub")
 
@@ -552,3 +561,126 @@ class Storage:
                 """,
                 (str(message_id), str(channel_id)),
             )
+
+    # --- telemetry -----------------------------------------------------
+    #
+    # Durable and deliberately separate from active_temp_channels: these
+    # rows are never touched by room creation/cleanup/reconciliation and
+    # survive it. See schema.sql and services/telemetry.py for the full
+    # design (why daily buckets instead of a raw event log, and the
+    # pseudonymization boundary for user_key/guild_key).
+
+    async def record_telemetry_event(self, event_type: str) -> None:
+        await asyncio.to_thread(self._record_telemetry_event, event_type)
+
+    def _record_telemetry_event(self, event_type: str) -> None:
+        day = datetime.now(UTC).date().isoformat()
+        with closing(self._connect()) as connection, connection:
+            connection.execute(
+                """
+                insert into telemetry_daily_counts (day, event_type, count)
+                values (?, ?, 1)
+                on conflict (day, event_type) do update set count = count + 1
+                """,
+                (day, event_type),
+            )
+
+    async def record_known_user(self, user_key: str) -> None:
+        await asyncio.to_thread(self._record_known_user, user_key)
+
+    def _record_known_user(self, user_key: str) -> None:
+        with closing(self._connect()) as connection, connection:
+            connection.execute(
+                """
+                insert or ignore into telemetry_known_users (user_key, first_seen_at)
+                values (?, ?)
+                """,
+                (user_key, utc_now_iso()),
+            )
+
+    async def record_known_guild(self, guild_key: str) -> None:
+        await asyncio.to_thread(self._record_known_guild, guild_key)
+
+    def _record_known_guild(self, guild_key: str) -> None:
+        with closing(self._connect()) as connection, connection:
+            connection.execute(
+                """
+                insert or ignore into telemetry_known_guilds (guild_key, first_seen_at)
+                values (?, ?)
+                """,
+                (guild_key, utc_now_iso()),
+            )
+
+    async def get_telemetry_summary(self) -> dict[str, int]:
+        return await asyncio.to_thread(self._get_telemetry_summary)
+
+    def _get_telemetry_summary(self) -> dict[str, int]:
+        """Derive every product/adoption and reliability metric telemetry
+        storage can answer, in one call.
+
+        7d/30d are trailing calendar-day windows in UTC, inclusive of
+        today: "7d" sums today plus the 6 days before it, "30d" sums today
+        plus the 29 days before it. This is the one place that definition
+        is implemented; tests assert against it here rather than
+        re-deriving it, so it cannot drift between what is stored and what
+        is reported.
+        """
+        today = datetime.now(UTC).date()
+        window_7d_start = (today - timedelta(days=6)).isoformat()
+        window_30d_start = (today - timedelta(days=29)).isoformat()
+
+        with closing(self._connect()) as connection, connection:
+            totals: dict[str, int] = {
+                row["event_type"]: row["total"]
+                for row in connection.execute(
+                    """
+                    select event_type, sum(count) as total
+                    from telemetry_daily_counts
+                    group by event_type
+                    """
+                )
+            }
+            rooms_created_7d = connection.execute(
+                """
+                select coalesce(sum(count), 0) as total from telemetry_daily_counts
+                where event_type = ? and day >= ?
+                """,
+                (TELEMETRY_EVENT_ROOM_CREATED, window_7d_start),
+            ).fetchone()["total"]
+            rooms_created_30d = connection.execute(
+                """
+                select coalesce(sum(count), 0) as total from telemetry_daily_counts
+                where event_type = ? and day >= ?
+                """,
+                (TELEMETRY_EVENT_ROOM_CREATED, window_30d_start),
+            ).fetchone()["total"]
+            unique_users_served_total = connection.execute(
+                "select count(*) as total from telemetry_known_users"
+            ).fetchone()["total"]
+            unique_guilds_served_total = connection.execute(
+                "select count(*) as total from telemetry_known_guilds"
+            ).fetchone()["total"]
+            # Not telemetry storage -- temp_vc_profiles is existing durable
+            # config, included here purely as a convenience so one call
+            # answers every metric the product-stats surface needs.
+            active_profiles = connection.execute(
+                "select count(*) as total from temp_vc_profiles"
+            ).fetchone()["total"]
+
+        return {
+            "rooms_created_total": totals.get(TELEMETRY_EVENT_ROOM_CREATED, 0),
+            "rooms_created_7d": rooms_created_7d,
+            "rooms_created_30d": rooms_created_30d,
+            "unique_users_served_total": unique_users_served_total,
+            "unique_guilds_served_total": unique_guilds_served_total,
+            "active_profiles": active_profiles,
+            "room_create_failed_total": totals.get(TELEMETRY_EVENT_ROOM_CREATE_FAILED, 0),
+            "duplicate_blocked_total": totals.get(TELEMETRY_EVENT_DUPLICATE_BLOCKED, 0),
+            "rollback_failed_tracking_preserved_total": totals.get(
+                TELEMETRY_EVENT_ROLLBACK_FAILED_TRACKING_PRESERVED, 0
+            ),
+            "reconcile_cleanup_ok_total": totals.get(TELEMETRY_EVENT_RECONCILE_CLEANUP_OK, 0),
+            "reconcile_cleanup_failed_total": totals.get(
+                TELEMETRY_EVENT_RECONCILE_CLEANUP_FAILED, 0
+            ),
+        }

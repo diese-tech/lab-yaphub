@@ -211,9 +211,57 @@ DISCORD_TOKEN=your_discord_bot_token_here
 YAPHUB_DATA_DIR=./data
 # Optional explicit override:
 # YAPHUB_DB_PATH=./data/yaphub.sqlite3
+# Optional, see Usage Telemetry below:
+# YAPHUB_ANALYTICS_SECRET=
 ```
 
 `YAPHUB_DB_PATH` wins if both are set.
+
+## Usage Telemetry
+
+YapHub persists durable, privacy-safe usage telemetry — answering "what has
+YapHub done over time" (rooms created, by whom, how often creation fails) as
+a deliberately separate concern from `active_temp_channels`, which answers
+"what Discord resources currently exist right now." Telemetry rows are never
+touched by room creation, cleanup, or reconciliation, so historical counts
+survive normal room lifecycle activity that deletes the operational record.
+
+**Storage shape** (`services/telemetry.py`, `storage.py`):
+
+- `telemetry_daily_counts` — one row per `(day, event_type)`, incremented on
+  every event. Bounded by calendar days elapsed, not by usage volume — a
+  decade of daily rows across all event types is a few tens of thousands,
+  never needs pruning. Rolling 7d/30d windows sum trailing calendar days in
+  UTC, inclusive of today.
+- `telemetry_known_users` / `telemetry_known_guilds` — one row per distinct
+  pseudonymous entity ever seen, giving an exact lifetime-unique count as a
+  plain row count. Bounded by real entity cardinality, same as
+  `guild_configs`.
+
+**Privacy boundary.** Nothing here ever stores a raw Discord user or guild
+ID. Exact unique counts use a pseudonymous key instead:
+
+```text
+user_key  = HMAC-SHA256(YAPHUB_ANALYTICS_SECRET, "user:"  + discord_user_id)
+guild_key = HMAC-SHA256(YAPHUB_ANALYTICS_SECRET, "guild:" + discord_guild_id)
+```
+
+The `user:`/`guild:` prefix means a user and a guild that happen to share a
+numeric snowflake never collide. The HMAC is *keyed* specifically so nobody
+who has read this source can recompute a key without the secret — a plain
+hash of the ID would not be pseudonymous at all. Counter-only metrics (room
+totals, reliability counters) never touch identity: they are a daily count
+bump with no user or guild reference stored anywhere. `YAPHUB_ANALYTICS_SECRET`
+is optional — without it, room-count and reliability metrics work normally;
+only unique-entity recognition pauses until it is configured, logging one
+warning rather than failing startup over an optional feature. Every
+telemetry call is best-effort: a telemetry failure can never affect the
+temp-room lifecycle it measures.
+
+Telemetry is internal. Nothing in this repo currently exposes it publicly —
+`storage.get_telemetry_summary()` is the one read path, returning aggregate
+counts only (never a pseudonymous key), and is meant for a future
+cached/rate-limited public surface, not direct exposure.
 
 ## Railway Volume Setup
 

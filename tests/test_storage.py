@@ -511,3 +511,172 @@ async def test_created_at_is_a_parseable_utc_timestamp(storage):
     created = datetime.fromisoformat(record["created_at"])
     assert created.tzinfo is not None
     assert abs((datetime.now(UTC) - created).total_seconds()) < 60
+
+
+# --- telemetry --------------------------------------------------------------
+
+
+async def test_record_telemetry_event_creates_and_increments_todays_bucket(storage):
+    await storage.record_telemetry_event("room_created")
+    await storage.record_telemetry_event("room_created")
+    await storage.record_telemetry_event("duplicate_blocked")
+
+    summary = await storage.get_telemetry_summary()
+
+    assert summary["rooms_created_total"] == 2
+    assert summary["duplicate_blocked_total"] == 1
+
+
+async def test_record_known_user_is_idempotent_on_repeat(storage):
+    await storage.record_known_user("key-a")
+    await storage.record_known_user("key-a")
+    await storage.record_known_user("key-b")
+
+    summary = await storage.get_telemetry_summary()
+
+    assert summary["unique_users_served_total"] == 2
+
+
+async def test_record_known_guild_is_idempotent_on_repeat(storage):
+    await storage.record_known_guild("guild-key-a")
+    await storage.record_known_guild("guild-key-a")
+
+    summary = await storage.get_telemetry_summary()
+
+    assert summary["unique_guilds_served_total"] == 1
+
+
+async def test_telemetry_summary_starts_at_zero(storage):
+    summary = await storage.get_telemetry_summary()
+
+    assert summary == {
+        "rooms_created_total": 0,
+        "rooms_created_7d": 0,
+        "rooms_created_30d": 0,
+        "unique_users_served_total": 0,
+        "unique_guilds_served_total": 0,
+        "active_profiles": 0,
+        "room_create_failed_total": 0,
+        "duplicate_blocked_total": 0,
+        "rollback_failed_tracking_preserved_total": 0,
+        "reconcile_cleanup_ok_total": 0,
+        "reconcile_cleanup_failed_total": 0,
+    }
+
+
+async def test_telemetry_summary_includes_active_profiles_from_existing_config(storage):
+    await storage.create_profile(
+        guild_id=1,
+        name="Default",
+        join_channel_id=100,
+        target_category_id=None,
+        created_by_user_id=1,
+    )
+
+    summary = await storage.get_telemetry_summary()
+
+    assert summary["active_profiles"] == 1
+
+
+def _backdate_telemetry_day(storage, event_type: str, days_ago: int, count: int = 1) -> None:
+    """Directly seed a daily-count row for a day other than today, so the
+    7d/30d window math can be tested without waiting real days."""
+    import sqlite3
+    from datetime import UTC, datetime, timedelta
+
+    day = (datetime.now(UTC).date() - timedelta(days=days_ago)).isoformat()
+    connection = sqlite3.connect(storage.database_path)
+    with connection:
+        connection.execute(
+            """
+            insert into telemetry_daily_counts (day, event_type, count)
+            values (?, ?, ?)
+            on conflict (day, event_type) do update set count = count + excluded.count
+            """,
+            (day, event_type, count),
+        )
+    connection.close()
+
+
+async def test_rooms_created_7d_includes_today_and_the_six_days_before(storage):
+    # In-window: today (0), 6 days ago (edge, still included).
+    await storage.record_telemetry_event("room_created")  # today
+    _backdate_telemetry_day(storage, "room_created", days_ago=6)
+    # Out-of-window: 7 days ago.
+    _backdate_telemetry_day(storage, "room_created", days_ago=7)
+
+    summary = await storage.get_telemetry_summary()
+
+    assert summary["rooms_created_7d"] == 2
+    assert summary["rooms_created_total"] == 3
+
+
+async def test_rooms_created_30d_includes_today_and_the_29_days_before(storage):
+    await storage.record_telemetry_event("room_created")  # today
+    _backdate_telemetry_day(storage, "room_created", days_ago=29)  # edge, included
+    _backdate_telemetry_day(storage, "room_created", days_ago=30)  # excluded
+
+    summary = await storage.get_telemetry_summary()
+
+    assert summary["rooms_created_30d"] == 2
+    assert summary["rooms_created_total"] == 3
+
+
+async def test_rooms_created_windows_do_not_leak_into_other_event_types(storage):
+    """The 7d/30d windows are computed only for room_created; a reliability
+    counter with recent activity must not inflate them."""
+    await storage.record_telemetry_event("room_create_failed")
+    await storage.record_telemetry_event("duplicate_blocked")
+
+    summary = await storage.get_telemetry_summary()
+
+    assert summary["rooms_created_7d"] == 0
+    assert summary["rooms_created_30d"] == 0
+    assert summary["rooms_created_total"] == 0
+
+
+async def test_all_reliability_counters_are_independently_tracked(storage):
+    await storage.record_telemetry_event("room_create_failed")
+    await storage.record_telemetry_event("room_create_failed")
+    await storage.record_telemetry_event("duplicate_blocked")
+    await storage.record_telemetry_event("rollback_failed_tracking_preserved")
+    await storage.record_telemetry_event("reconcile_cleanup_ok")
+    await storage.record_telemetry_event("reconcile_cleanup_ok")
+    await storage.record_telemetry_event("reconcile_cleanup_ok")
+    await storage.record_telemetry_event("reconcile_cleanup_failed")
+
+    summary = await storage.get_telemetry_summary()
+
+    assert summary["room_create_failed_total"] == 2
+    assert summary["duplicate_blocked_total"] == 1
+    assert summary["rollback_failed_tracking_preserved_total"] == 1
+    assert summary["reconcile_cleanup_ok_total"] == 3
+    assert summary["reconcile_cleanup_failed_total"] == 1
+
+
+async def test_telemetry_counts_are_never_touched_by_room_deletion(storage):
+    """The whole point of separating telemetry from active_temp_channels:
+    historical counts must survive normal room cleanup, unlike the
+    operational record itself."""
+    await storage.create_active_temp_channel(
+        channel_id=500, guild_id=1, profile_id="profile-1", owner_user_id=7
+    )
+    await storage.record_telemetry_event("room_created")
+
+    await storage.delete_active_temp_channel(500)
+
+    summary = await storage.get_telemetry_summary()
+    assert summary["rooms_created_total"] == 1
+    assert await storage.get_active_temp_channel(500) is None
+
+
+async def test_telemetry_survives_a_fresh_storage_instance_over_the_same_file(storage, tmp_path):
+    await storage.record_telemetry_event("room_created")
+    await storage.record_known_user("key-a")
+
+    restarted = Storage(storage.database_path)
+    await restarted.initialize()
+
+    summary = await restarted.get_telemetry_summary()
+    assert summary["rooms_created_total"] == 1
+    assert summary["unique_users_served_total"] == 1
