@@ -46,6 +46,20 @@ async def test_get_guild_config_missing_returns_none(storage):
     assert await storage.get_guild_config(guild_id=999) is None
 
 
+async def test_list_all_guild_ids_returns_every_configured_guild(storage):
+    await storage.get_or_create_guild_config(guild_id=111)
+    await storage.get_or_create_guild_config(guild_id=222)
+
+    guild_ids = await storage.list_all_guild_ids()
+
+    assert sorted(guild_ids) == [111, 222]
+    assert all(isinstance(guild_id, int) for guild_id in guild_ids)
+
+
+async def test_list_all_guild_ids_is_empty_with_no_configured_guilds(storage):
+    assert await storage.list_all_guild_ids() == []
+
+
 async def test_reset_guild_configuration_clears_profiles_and_config(storage):
     await storage.get_or_create_guild_config(guild_id=1)
     await storage.create_profile(

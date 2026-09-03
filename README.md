@@ -326,6 +326,19 @@ value; the landing page's JS renders `—` when the key is absent. The other
 fields never depend on the secret (plain counters / existing config, no
 identity involved), so a `0` there is always a real, honest zero.
 
+**`servers_served` backfills from existing guild config the first time the
+secret goes live.** `telemetry_known_guilds` (what `servers_served` counts)
+only grows from `record_room_created()` — so turning
+`YAPHUB_ANALYTICS_SECRET` on for a deployment that's already had guilds set
+up and using it would otherwise show `servers_served: 0` until each of
+those guilds happens to create a *new* room. On every startup,
+`backfill_known_guilds()` (`services/telemetry.py`) folds every guild
+already present in `guild_configs` (i.e. every guild that's run
+`/yap setup`) into `telemetry_known_guilds`, hashed with whatever secret is
+currently configured. It's a no-op without the secret, and idempotent
+(`insert or ignore`) so it's safe to run on every boot rather than as a
+one-off migration.
+
 **Deploying it.** Enable public networking for the Railway service
 (Settings → Networking → Generate Domain — the server binds `$PORT`, which
 Railway sets automatically) and paste the resulting URL into the

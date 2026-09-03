@@ -139,6 +139,14 @@ class Storage:
                 (str(guild_id),),
             ).fetchone()
 
+    async def list_all_guild_ids(self) -> Sequence[int]:
+        return await asyncio.to_thread(self._list_all_guild_ids)
+
+    def _list_all_guild_ids(self) -> Sequence[int]:
+        with closing(self._connect()) as connection, connection:
+            rows = connection.execute("select guild_id from guild_configs").fetchall()
+        return [int(row["guild_id"]) for row in rows]
+
     async def set_mod_log_channel(self, guild_id: int, channel_id: int | None) -> None:
         await asyncio.to_thread(self._set_mod_log_channel, guild_id, channel_id)
 

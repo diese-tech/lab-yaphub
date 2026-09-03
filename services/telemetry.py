@@ -141,6 +141,41 @@ async def record_room_created(bot, guild_id: int, user_id: int) -> None:
             logger.exception("Failed to record known user for telemetry")
 
 
+async def backfill_known_guilds(bot) -> None:
+    """One-time-per-startup reconciliation: fold every guild that already
+    has a stored config (ran /yap setup) into telemetry_known_guilds.
+
+    Without this, servers_served only grows from record_room_created()
+    going forward -- so a guild that configured and used YapHub *before*
+    YAPHUB_ANALYTICS_SECRET was ever set (or before this deployment) would
+    sit uncounted until it happens to create a fresh room after the secret
+    is live. guild_configs already stores raw guild_id for the operational
+    reason of running the bot -- this hashes each one with the
+    now-configured secret before writing it to the pseudonymous table,
+    exactly like the runtime path does for a new guild. A no-op if the
+    secret isn't configured (nothing safe to derive). Idempotent
+    (record_known_guild is `insert or ignore`), so safe to call on every
+    startup. Best-effort: never raises.
+    """
+    if not analytics_secret_configured():
+        return
+
+    try:
+        guild_ids = await bot.storage.list_all_guild_ids()
+    except Exception:
+        logger.exception("Failed to list guild ids for telemetry backfill")
+        return
+
+    for guild_id in guild_ids:
+        guild_key = pseudonymous_guild_key(guild_id)
+        if guild_key is None:
+            continue
+        try:
+            await bot.storage.record_known_guild(guild_key)
+        except Exception:
+            logger.exception("Failed to backfill known guild for telemetry")
+
+
 async def record_room_create_failed(bot) -> None:
     await record_event(bot, TELEMETRY_EVENT_ROOM_CREATE_FAILED)
 

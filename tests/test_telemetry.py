@@ -32,6 +32,7 @@ def _bot(**storage_overrides):
         record_telemetry_event=AsyncMock(),
         record_known_user=AsyncMock(),
         record_known_guild=AsyncMock(),
+        list_all_guild_ids=AsyncMock(return_value=[]),
     )
     defaults.update(storage_overrides)
     return types.SimpleNamespace(storage=types.SimpleNamespace(**defaults))
@@ -196,3 +197,54 @@ async def test_each_reliability_recorder_bumps_its_own_event_type(record_fn, exp
     await record_fn(bot)
 
     bot.storage.record_telemetry_event.assert_awaited_once_with(expected_event_type)
+
+
+# --- backfill_known_guilds ----------------------------------------------
+
+
+async def test_backfill_folds_every_configured_guild_when_secret_is_set(monkeypatch):
+    monkeypatch.setenv("YAPHUB_ANALYTICS_SECRET", "s3cret")
+    bot = _bot(list_all_guild_ids=AsyncMock(return_value=[100, 200]))
+
+    await telemetry.backfill_known_guilds(bot)
+
+    bot.storage.record_known_guild.assert_any_await(telemetry.pseudonymous_guild_key(100))
+    bot.storage.record_known_guild.assert_any_await(telemetry.pseudonymous_guild_key(200))
+    assert bot.storage.record_known_guild.await_count == 2
+
+
+async def test_backfill_is_a_noop_without_the_secret(monkeypatch):
+    """Without the secret there's nothing safe to derive -- and calling
+    storage at all would be wasted work on every startup."""
+    monkeypatch.delenv("YAPHUB_ANALYTICS_SECRET", raising=False)
+    bot = _bot(list_all_guild_ids=AsyncMock(return_value=[100, 200]))
+
+    await telemetry.backfill_known_guilds(bot)
+
+    bot.storage.list_all_guild_ids.assert_not_called()
+    bot.storage.record_known_guild.assert_not_called()
+
+
+async def test_backfill_never_raises_when_listing_guild_ids_fails(monkeypatch, caplog):
+    monkeypatch.setenv("YAPHUB_ANALYTICS_SECRET", "s3cret")
+    bot = _bot(list_all_guild_ids=AsyncMock(side_effect=RuntimeError("db down")))
+
+    await telemetry.backfill_known_guilds(bot)  # must not raise
+
+    bot.storage.record_known_guild.assert_not_called()
+    assert "Failed to list guild ids for telemetry backfill" in caplog.text
+
+
+async def test_backfill_continues_past_a_single_guild_write_failure(monkeypatch, caplog):
+    """One guild's write failing must not skip the rest -- each is
+    independently best-effort, matching record_room_created's pattern."""
+    monkeypatch.setenv("YAPHUB_ANALYTICS_SECRET", "s3cret")
+    bot = _bot(
+        list_all_guild_ids=AsyncMock(return_value=[100, 200]),
+        record_known_guild=AsyncMock(side_effect=[RuntimeError("db down"), None]),
+    )
+
+    await telemetry.backfill_known_guilds(bot)  # must not raise
+
+    assert bot.storage.record_known_guild.await_count == 2
+    assert "Failed to backfill known guild for telemetry" in caplog.text
