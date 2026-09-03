@@ -13,9 +13,9 @@ telemetry summary later cannot silently leak into the public payload just
 by existing in the summary dict.
 
 The snapshot is a cache, not a live view: refresh_public_stats_snapshot
-is meant to run about once a day (see bot.py's stats_refresh_loop), and a
-failed refresh must leave the previous good snapshot in place -- this
-module never deletes or clears a snapshot, only replaces it on success.
+runs hourly (see bot.py's stats_refresh_loop), and a failed refresh must
+leave the previous good snapshot in place -- this module never deletes or
+clears a snapshot, only replaces it on success.
 """
 
 import json
@@ -28,9 +28,8 @@ from services.telemetry import analytics_secret_configured
 logger = logging.getLogger("yaphub")
 
 # The timezone the public "Stats as of ..." freshness label is expressed
-# in, matching the issue's example ("2026-09-02T10:00:00-04:00") and the
-# ~10am ET refresh schedule. zoneinfo resolves EST/EDT automatically, so
-# this needs no manual DST handling.
+# in, matching the issue's example ("2026-09-02T10:00:00-04:00"). zoneinfo
+# resolves EST/EDT automatically, so this needs no manual DST handling.
 _STATS_TIMEZONE = ZoneInfo("America/New_York")
 
 
