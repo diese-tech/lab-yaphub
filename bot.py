@@ -1,9 +1,7 @@
 import asyncio
-import datetime
 import logging
 import os
 from collections.abc import Mapping
-from zoneinfo import ZoneInfo
 
 import discord
 from discord import app_commands
@@ -14,8 +12,7 @@ from commands import YapGroup
 from config import (
     DATABASE_PATH,
     RECONCILE_INTERVAL_MINUTES,
-    STATS_REFRESH_HOUR_ET,
-    STATS_REFRESH_MINUTE_ET,
+    STATS_REFRESH_INTERVAL_HOURS,
     STATS_SERVER_HOST,
     STATS_SERVER_PORT,
 )
@@ -87,7 +84,7 @@ class YapHubBot(commands.Bot):
         # refresh_public_stats_snapshot is the only writer after startup;
         # setup_hook below does the one-time warm read from durable
         # storage so a restart doesn't 503 while waiting for the first
-        # daily refresh.
+        # scheduled refresh.
         self.public_stats_cache: str | None = None
 
     async def setup_hook(self) -> None:
@@ -237,13 +234,7 @@ async def before_reconcile_loop() -> None:
     await bot.wait_until_ready()
 
 
-@tasks.loop(
-    time=datetime.time(
-        hour=STATS_REFRESH_HOUR_ET,
-        minute=STATS_REFRESH_MINUTE_ET,
-        tzinfo=ZoneInfo("America/New_York"),
-    )
-)
+@tasks.loop(hours=STATS_REFRESH_INTERVAL_HOURS)
 async def stats_refresh_loop() -> None:
     await bot.wait_until_ready()
     # refresh_public_stats_snapshot never raises (see services/
@@ -260,7 +251,7 @@ async def before_stats_refresh_loop() -> None:
 async def on_stats_refresh_loop_error(error: BaseException) -> None:
     """Same rationale as on_reconcile_loop_error: the body above cannot
     raise on its own, but a failure outside it (e.g. wait_until_ready
-    during a shutdown race) would otherwise leave the daily refresh
+    during a shutdown race) would otherwise leave the refresh loop
     permanently dead for the rest of the process's life."""
     logger.exception("Stats refresh loop stopped unexpectedly; restarting", exc_info=error)
     if not stats_refresh_loop.is_running():

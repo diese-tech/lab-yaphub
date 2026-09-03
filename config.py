@@ -41,7 +41,6 @@ STATS_SERVER_HOST = "0.0.0.0"
 STATS_SERVER_PORT = int(os.getenv("PORT", "8080"))
 
 # How often the cached public stats snapshot is refreshed from durable
-# telemetry. discord.ext.tasks' `time=` scheduling (see bot.py) runs this
-# once at (approximately) this wall-clock time daily, DST-safe via zoneinfo.
-STATS_REFRESH_HOUR_ET = 10
-STATS_REFRESH_MINUTE_ET = 0
+# telemetry. discord.ext.tasks' `hours=` scheduling (see bot.py) runs this
+# once immediately, then every N hours after that.
+STATS_REFRESH_INTERVAL_HOURS = 1

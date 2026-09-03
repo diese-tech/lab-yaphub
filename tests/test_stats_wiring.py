@@ -1,4 +1,4 @@
-"""Tests for the public-stats wiring in bot.py: the daily refresh loop's
+"""Tests for the public-stats wiring in bot.py: the refresh loop's
 schedule and resilience, and the stats server's best-effort startup/
 shutdown as part of the bot's own lifecycle.
 
@@ -8,25 +8,19 @@ the equivalent properties for reconcile_loop.
 
 from __future__ import annotations
 
-import datetime
 import inspect
 from unittest.mock import AsyncMock, Mock, PropertyMock, patch
-from zoneinfo import ZoneInfo
 
 from discord.ext import commands
 
 import bot as bot_module
-from config import STATS_REFRESH_HOUR_ET, STATS_REFRESH_MINUTE_ET
+from config import STATS_REFRESH_INTERVAL_HOURS
 
 
-def test_stats_refresh_loop_is_scheduled_for_the_configured_eastern_time():
-    scheduled = bot_module.stats_refresh_loop.time[0]
-
-    assert scheduled == datetime.time(
-        hour=STATS_REFRESH_HOUR_ET,
-        minute=STATS_REFRESH_MINUTE_ET,
-        tzinfo=ZoneInfo("America/New_York"),
-    )
+def test_stats_refresh_loop_is_scheduled_at_the_configured_interval():
+    assert bot_module.stats_refresh_loop.hours == STATS_REFRESH_INTERVAL_HOURS
+    assert bot_module.stats_refresh_loop.minutes == 0
+    assert bot_module.stats_refresh_loop.seconds == 0
 
 
 def test_stats_refresh_loop_body_cannot_kill_itself():
@@ -86,8 +80,8 @@ async def test_setup_hook_continues_if_the_stats_server_fails_to_start(caplog):
 
 async def test_setup_hook_warms_the_cache_from_a_prior_snapshot():
     """A restart must not 503 the public endpoint while waiting for the
-    next daily refresh -- setup_hook reads the last durable snapshot into
-    the in-memory cache the HTTP route serves from."""
+    next scheduled refresh -- setup_hook reads the last durable snapshot
+    into the in-memory cache the HTTP route serves from."""
     fresh_bot = bot_module.YapHubBot.__new__(bot_module.YapHubBot)
     fresh_bot.storage = AsyncMock()
     fresh_bot.storage.get_public_stats_snapshot = AsyncMock(

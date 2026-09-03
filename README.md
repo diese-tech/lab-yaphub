@@ -285,8 +285,8 @@ networking is a first-class, well-supported path for exactly this.
 
 **It is a cache, not a live view — and the HTTP route never touches
 storage.** `services/public_stats.py` builds a snapshot from
-`get_telemetry_summary()` about once a day (`~10:00 AM ET`, DST-safe via
-`zoneinfo`; see `stats_refresh_loop` in `bot.py`), persists it to SQLite
+`get_telemetry_summary()` hourly (`STATS_REFRESH_INTERVAL_HOURS` in
+`config.py`; see `stats_refresh_loop` in `bot.py`), persists it to SQLite
 (`public_stats_snapshot` — one row, always the latest), and writes it into
 `bot.public_stats_cache`, a plain in-process attribute. The HTTP handler in
 `services/stats_server.py` reads only that attribute — it never calls
@@ -298,7 +298,7 @@ flood queue enough work on that shared pool to delay real Discord
 operations. Reading a plain attribute instead makes that impossible by
 construction. `bot.py`'s `setup_hook` warms `public_stats_cache` from the
 durable snapshot once at startup, so a restart doesn't serve `503` while
-waiting for the next daily refresh. A failed refresh — a storage error,
+waiting for the next scheduled refresh. A failed refresh — a storage error,
 whatever — leaves the previous cached snapshot (both the SQLite row and the
 in-memory cache) exactly as it was; nothing here ever clears the cache, only
 replaces it on a *successful* refresh. The landing page shows the cached
