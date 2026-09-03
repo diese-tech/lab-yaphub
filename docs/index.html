@@ -1292,8 +1292,14 @@ html {
       fetch(STATS_ENDPOINT, { cache: 'no-store' })
         .then((response) => (response.ok ? response.json() : Promise.reject(response.status)))
         .then((stats) => {
+          // servers_served is OMITTED (not zeroed) by the backend when
+          // YAPHUB_ANALYTICS_SECRET isn't configured -- see
+          // services/public_stats.py's build_public_snapshot(). '0' here
+          // would misreport an established deployment as having no
+          // servers; '—' honestly says "not tracked yet." rooms_created_total
+          // never depends on the secret, so a real 0 there stays a real 0.
           document.getElementById('guild-count').textContent =
-            Number.isFinite(stats.servers_served) ? stats.servers_served.toLocaleString() : '0';
+            Number.isFinite(stats.servers_served) ? stats.servers_served.toLocaleString() : '—';
           document.getElementById('rooms-created').textContent =
             Number.isFinite(stats.rooms_created_total) ? stats.rooms_created_total.toLocaleString() : '0';
 

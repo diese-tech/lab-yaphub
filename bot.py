@@ -79,11 +79,30 @@ class YapHubBot(commands.Bot):
         self.reconcile_lock = asyncio.Lock()
         self.started_once = False
         self.stats_server_runner: object | None = None
+        # The one thing services/stats_server.py's request handler reads.
+        # A plain in-process attribute, never a storage call, specifically
+        # so a flood of public HTTP requests cannot queue work onto the
+        # same asyncio.to_thread executor real Discord operations share.
+        # refresh_public_stats_snapshot is the only writer after startup;
+        # setup_hook below does the one-time warm read from durable
+        # storage so a restart doesn't 503 while waiting for the first
+        # daily refresh.
+        self.public_stats_cache: str | None = None
 
     async def setup_hook(self) -> None:
         await self.storage.initialize()
         self.tree.add_command(YapGroup(self))
         self.add_view(RoomControlPanel())
+
+        try:
+            row = await self.storage.get_public_stats_snapshot()
+            if row is not None:
+                self.public_stats_cache = row["payload"]
+        except Exception:
+            logger.exception(
+                "Failed to warm the public stats cache from storage; "
+                "the stats endpoint will 503 until the next refresh"
+            )
 
         try:
             self.stats_server_runner = await start_stats_server(

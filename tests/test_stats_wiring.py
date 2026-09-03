@@ -69,7 +69,9 @@ async def test_setup_hook_continues_if_the_stats_server_fails_to_start(caplog):
     not stop the bot from logging into Discord and doing its actual job."""
     fresh_bot = bot_module.YapHubBot.__new__(bot_module.YapHubBot)
     fresh_bot.storage = AsyncMock()
+    fresh_bot.storage.get_public_stats_snapshot = AsyncMock(return_value=None)
     fresh_bot.stats_server_runner = None
+    fresh_bot.public_stats_cache = None
 
     with patch(
         "bot.start_stats_server", new=AsyncMock(side_effect=OSError("address in use"))
@@ -80,6 +82,49 @@ async def test_setup_hook_continues_if_the_stats_server_fails_to_start(caplog):
 
     assert fresh_bot.stats_server_runner is None
     assert "Failed to start the public stats server" in caplog.text
+
+
+async def test_setup_hook_warms_the_cache_from_a_prior_snapshot():
+    """A restart must not 503 the public endpoint while waiting for the
+    next daily refresh -- setup_hook reads the last durable snapshot into
+    the in-memory cache the HTTP route serves from."""
+    fresh_bot = bot_module.YapHubBot.__new__(bot_module.YapHubBot)
+    fresh_bot.storage = AsyncMock()
+    fresh_bot.storage.get_public_stats_snapshot = AsyncMock(
+        return_value={"as_of": "2026-09-02T10:00:00-04:00", "payload": '{"rooms_created_total": 1}'}
+    )
+    fresh_bot.stats_server_runner = None
+    fresh_bot.public_stats_cache = None
+
+    with patch("bot.start_stats_server", new=AsyncMock(return_value=object())), patch.object(
+        bot_module.YapHubBot, "add_view"
+    ), patch.object(
+        commands.Bot, "tree", new_callable=PropertyMock, return_value=Mock(add_command=Mock())
+    ):
+        await fresh_bot.setup_hook()
+
+    assert fresh_bot.public_stats_cache == '{"rooms_created_total": 1}'
+
+
+async def test_setup_hook_continues_if_warming_the_cache_fails(caplog):
+    """A storage error reading the prior snapshot must not stop the bot
+    from starting the stats server or logging into Discord."""
+    fresh_bot = bot_module.YapHubBot.__new__(bot_module.YapHubBot)
+    fresh_bot.storage = AsyncMock()
+    fresh_bot.storage.get_public_stats_snapshot = AsyncMock(side_effect=RuntimeError("db down"))
+    fresh_bot.stats_server_runner = None
+    fresh_bot.public_stats_cache = None
+
+    with patch("bot.start_stats_server", new=AsyncMock(return_value=object())), patch.object(
+        bot_module.YapHubBot, "add_view"
+    ), patch.object(
+        commands.Bot, "tree", new_callable=PropertyMock, return_value=Mock(add_command=Mock())
+    ):
+        await fresh_bot.setup_hook()  # must not raise
+
+    assert fresh_bot.public_stats_cache is None
+    assert fresh_bot.stats_server_runner is not None
+    assert "Failed to warm the public stats cache" in caplog.text
 
 
 async def test_close_cleans_up_the_stats_server_runner_when_present():

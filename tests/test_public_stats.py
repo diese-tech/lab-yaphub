@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from config import ANALYTICS_SECRET_ENV_VAR
 from services.public_stats import build_public_snapshot, refresh_public_stats_snapshot
 
 FULL_TELEMETRY_SUMMARY = {
@@ -32,13 +33,35 @@ FULL_TELEMETRY_SUMMARY = {
 }
 
 
-def test_the_public_snapshot_contains_exactly_the_documented_fields():
+def test_the_public_snapshot_contains_exactly_the_documented_fields_when_secret_is_configured(
+    monkeypatch,
+):
+    monkeypatch.setenv(ANALYTICS_SECRET_ENV_VAR, "test-secret")
+
     snapshot = build_public_snapshot(FULL_TELEMETRY_SUMMARY)
 
     assert set(snapshot.keys()) == {
         "as_of",
         "servers_served",
         "unique_users_served",
+        "rooms_created_total",
+        "rooms_created_7d",
+        "rooms_created_30d",
+        "active_profiles",
+    }
+
+
+def test_servers_served_and_unique_users_served_are_omitted_without_the_secret(monkeypatch):
+    """Without YAPHUB_ANALYTICS_SECRET, record_room_created() never folds
+    guilds/users into the unique-entity tables (see services/telemetry.py),
+    so those two counts are structurally untrustworthy -- omitted, not
+    published as a fake zero."""
+    monkeypatch.delenv(ANALYTICS_SECRET_ENV_VAR, raising=False)
+
+    snapshot = build_public_snapshot(FULL_TELEMETRY_SUMMARY)
+
+    assert set(snapshot.keys()) == {
+        "as_of",
         "rooms_created_total",
         "rooms_created_7d",
         "rooms_created_30d",
@@ -67,7 +90,9 @@ def test_internal_reliability_counters_never_reach_the_public_payload(internal_f
     assert distinctive_value not in snapshot.values()
 
 
-def test_public_field_values_map_from_the_correct_telemetry_field():
+def test_public_field_values_map_from_the_correct_telemetry_field(monkeypatch):
+    monkeypatch.setenv(ANALYTICS_SECRET_ENV_VAR, "test-secret")
+
     snapshot = build_public_snapshot(FULL_TELEMETRY_SUMMARY)
 
     assert snapshot["servers_served"] == 42
@@ -101,9 +126,11 @@ def test_as_of_reflects_generation_time_not_a_fixed_string():
     assert early["as_of"] != later["as_of"]
 
 
-def test_zero_state_produces_zeroed_not_missing_fields():
-    """A brand-new deployment with no activity yet must still publish a
-    complete, well-formed snapshot -- zeros, not partial/missing keys."""
+def test_zero_state_produces_zeroed_not_missing_fields_when_secret_is_configured(monkeypatch):
+    """A brand-new deployment with no activity yet, but a configured secret,
+    must still publish a complete, well-formed snapshot -- real zeros, not
+    partial/missing keys."""
+    monkeypatch.setenv(ANALYTICS_SECRET_ENV_VAR, "test-secret")
     empty_summary = {
         "rooms_created_total": 0,
         "rooms_created_7d": 0,
@@ -120,6 +147,29 @@ def test_zero_state_produces_zeroed_not_missing_fields():
     assert "as_of" in snapshot
 
 
+def test_zero_state_without_the_secret_still_publishes_the_never_omitted_fields(monkeypatch):
+    """Without the secret, servers_served/unique_users_served are omitted
+    (see test_servers_served_and_unique_users_served_are_omitted_without_the_secret)
+    -- but the fields that never depend on identity must still be present,
+    zeroed, not dropped along with them."""
+    monkeypatch.delenv(ANALYTICS_SECRET_ENV_VAR, raising=False)
+    empty_summary = {
+        "rooms_created_total": 0,
+        "rooms_created_7d": 0,
+        "rooms_created_30d": 0,
+        "unique_users_served_total": 0,
+        "unique_guilds_served_total": 0,
+        "active_profiles": 0,
+    }
+
+    snapshot = build_public_snapshot(empty_summary)
+
+    assert snapshot["rooms_created_total"] == 0
+    assert snapshot["active_profiles"] == 0
+    assert "servers_served" not in snapshot
+    assert "as_of" in snapshot
+
+
 # --- refresh orchestration ---------------------------------------------
 
 
@@ -129,10 +179,13 @@ def _bot(**storage_overrides):
         save_public_stats_snapshot=AsyncMock(),
     )
     defaults.update(storage_overrides)
-    return types.SimpleNamespace(storage=types.SimpleNamespace(**defaults))
+    return types.SimpleNamespace(
+        storage=types.SimpleNamespace(**defaults), public_stats_cache=None
+    )
 
 
-async def test_refresh_saves_a_built_snapshot():
+async def test_refresh_saves_a_built_snapshot(monkeypatch):
+    monkeypatch.setenv(ANALYTICS_SECRET_ENV_VAR, "test-secret")
     bot = _bot()
 
     await refresh_public_stats_snapshot(bot)
@@ -142,6 +195,20 @@ async def test_refresh_saves_a_built_snapshot():
     assert kwargs["as_of"]
     assert '"servers_served": 42' in kwargs["payload"]
     assert "room_create_failed_total" not in kwargs["payload"]
+
+
+async def test_refresh_updates_the_in_memory_cache_the_http_route_serves_from(monkeypatch):
+    """services/stats_server.py reads bot.public_stats_cache directly (no
+    storage call in the request path); refresh is the only writer of it."""
+    monkeypatch.setenv(ANALYTICS_SECRET_ENV_VAR, "test-secret")
+    bot = _bot()
+
+    await refresh_public_stats_snapshot(bot)
+
+    assert bot.public_stats_cache is not None
+    assert '"servers_served": 42' in bot.public_stats_cache
+    saved_payload = bot.storage.save_public_stats_snapshot.call_args.kwargs["payload"]
+    assert bot.public_stats_cache == saved_payload
 
 
 async def test_refresh_never_raises_when_telemetry_read_fails(caplog):
@@ -170,3 +237,12 @@ async def test_a_failed_refresh_does_not_overwrite_a_real_prior_snapshot(caplog)
     await refresh_public_stats_snapshot(bot)
 
     bot.storage.save_public_stats_snapshot.assert_not_called()
+
+
+async def test_a_failed_refresh_does_not_overwrite_the_in_memory_cache_either():
+    bot = _bot(get_telemetry_summary=AsyncMock(side_effect=RuntimeError("db down")))
+    bot.public_stats_cache = "previous-good-payload"
+
+    await refresh_public_stats_snapshot(bot)
+
+    assert bot.public_stats_cache == "previous-good-payload"

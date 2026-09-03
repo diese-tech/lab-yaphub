@@ -37,6 +37,31 @@ def _bot(**storage_overrides):
     return types.SimpleNamespace(storage=types.SimpleNamespace(**defaults))
 
 
+# --- analytics_secret_configured --------------------------------------------
+
+
+def test_analytics_secret_configured_is_true_when_the_env_var_is_set(monkeypatch):
+    monkeypatch.setenv("YAPHUB_ANALYTICS_SECRET", "s3cret")
+
+    assert telemetry.analytics_secret_configured() is True
+
+
+def test_analytics_secret_configured_is_false_when_unset(monkeypatch):
+    monkeypatch.delenv("YAPHUB_ANALYTICS_SECRET", raising=False)
+
+    assert telemetry.analytics_secret_configured() is False
+
+
+def test_analytics_secret_configured_has_no_warning_side_effect(monkeypatch, caplog):
+    """Unlike _get_secret(), this is meant to be called on every public-stats
+    build -- it must never touch the missing-secret warning latch or log."""
+    monkeypatch.delenv("YAPHUB_ANALYTICS_SECRET", raising=False)
+
+    telemetry.analytics_secret_configured()
+
+    assert "YAPHUB_ANALYTICS_SECRET is not set" not in caplog.text
+
+
 # --- pseudonymous key derivation --------------------------------------------
 
 

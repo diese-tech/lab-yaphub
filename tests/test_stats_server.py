@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import json
 import types
-from unittest.mock import AsyncMock
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
@@ -26,20 +25,17 @@ CACHED_PAYLOAD = json.dumps(
 )
 
 
-def _row(payload: str, as_of: str = "2026-09-02T10:00:00-04:00"):
-    return {"as_of": as_of, "payload": payload}
-
-
-def _bot(row=None):
-    storage = types.SimpleNamespace(
-        get_public_stats_snapshot=AsyncMock(return_value=row),
-    )
-    return types.SimpleNamespace(storage=storage)
+def _bot(cache: str | None = CACHED_PAYLOAD):
+    # The handler reads bot.public_stats_cache directly -- a plain
+    # in-process attribute, never bot.storage. See services/stats_server.py's
+    # module docstring for why (shared asyncio.to_thread executor
+    # contention).
+    return types.SimpleNamespace(public_stats_cache=cache)
 
 
 @pytest.fixture
 async def client(request):
-    bot = getattr(request, "param", None) or _bot(_row(CACHED_PAYLOAD))
+    bot = getattr(request, "param", None) or _bot()
     app = build_stats_app(bot)
     server = TestServer(app)
     async with TestClient(server) as client:
@@ -72,7 +68,7 @@ async def test_allows_cross_origin_reads(client):
 
 
 async def test_returns_503_with_no_snapshot_yet_rather_than_a_fake_payload():
-    bot = _bot(row=None)
+    bot = _bot(cache=None)
     app = build_stats_app(bot)
     async with TestClient(TestServer(app)) as client:
         response = await client.get("/stats.json")
