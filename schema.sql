@@ -97,3 +97,18 @@ create table if not exists public_stats_snapshot (
   as_of text not null,
   payload text not null
 );
+
+-- Tracks which YAPHUB_ANALYTICS_SECRET backfill_known_guilds() last ran
+-- under (see services/telemetry.py). A rotated secret produces a different
+-- HMAC for the same guild, so blindly re-backfilling under a new secret
+-- would insert a second, permanently-unmatchable row per guild into
+-- telemetry_known_guilds and silently inflate servers_served. Singleton
+-- row (id is always 1); no row at all means the backfill has never run.
+-- secret_fingerprint is a plain SHA-256 of the secret used only to detect
+-- whether it changed -- never the HMAC keying used for pseudonymization
+-- itself (see pseudonymous_guild_key / pseudonymous_user_key).
+create table if not exists telemetry_backfill_state (
+  id integer primary key check (id = 1),
+  secret_fingerprint text not null,
+  updated_at text not null
+);

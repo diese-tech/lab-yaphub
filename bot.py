@@ -22,6 +22,7 @@ from config import (
 from services.panel import RoomControlPanel
 from services.public_stats import refresh_public_stats_snapshot
 from services.stats_server import start_stats_server
+from services.telemetry import backfill_known_guilds
 from services.temp_channels import (
     cleanup_temp_channel,
     create_temp_room,
@@ -187,9 +188,15 @@ async def on_ready() -> None:
         if not reconcile_loop.is_running():
             reconcile_loop.start()
 
-        # refresh_public_stats_snapshot is already best-effort internally
-        # (see services/public_stats.py), so no try/except is needed here --
-        # unlike reconcile, a failure has no periodic-loop startup to guard.
+        # Fold every already-configured guild into the pseudonymous telemetry
+        # set before building the snapshot, so servers_served reflects real
+        # usage from the moment YAPHUB_ANALYTICS_SECRET is turned on -- not
+        # just guilds that happen to create a fresh room afterward. Both
+        # calls are already best-effort internally (see services/
+        # telemetry.py and services/public_stats.py), so no try/except is
+        # needed here -- unlike reconcile, a failure has no periodic-loop
+        # startup to guard.
+        await backfill_known_guilds(bot)
         await refresh_public_stats_snapshot(bot)
         if not stats_refresh_loop.is_running():
             stats_refresh_loop.start()

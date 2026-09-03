@@ -139,6 +139,22 @@ class Storage:
                 (str(guild_id),),
             ).fetchone()
 
+    async def list_guild_ids_with_profiles(self) -> Sequence[int]:
+        """Guild ids with at least one configured profile -- i.e. a guild
+        that has actually run /yap setup or /yap profile create, not merely
+        one that has a guild_configs row. get_or_create_guild_config() also
+        creates a guild_configs row for a guild that only ran /yap config or
+        /yap modlog with no profile ever configured, so guild_configs alone
+        over-counts "guilds using YapHub"."""
+        return await asyncio.to_thread(self._list_guild_ids_with_profiles)
+
+    def _list_guild_ids_with_profiles(self) -> Sequence[int]:
+        with closing(self._connect()) as connection, connection:
+            rows = connection.execute(
+                "select distinct guild_id from temp_vc_profiles"
+            ).fetchall()
+        return [int(row["guild_id"]) for row in rows]
+
     async def set_mod_log_channel(self, guild_id: int, channel_id: int | None) -> None:
         await asyncio.to_thread(self._set_mod_log_channel, guild_id, channel_id)
 
@@ -715,3 +731,29 @@ class Storage:
             return connection.execute(
                 "select as_of, payload from public_stats_snapshot where id = 1"
             ).fetchone()
+
+    async def get_telemetry_backfill_secret_fingerprint(self) -> str | None:
+        return await asyncio.to_thread(self._get_telemetry_backfill_secret_fingerprint)
+
+    def _get_telemetry_backfill_secret_fingerprint(self) -> str | None:
+        with closing(self._connect()) as connection, connection:
+            row = connection.execute(
+                "select secret_fingerprint from telemetry_backfill_state where id = 1"
+            ).fetchone()
+        return row["secret_fingerprint"] if row is not None else None
+
+    async def set_telemetry_backfill_secret_fingerprint(self, fingerprint: str) -> None:
+        await asyncio.to_thread(self._set_telemetry_backfill_secret_fingerprint, fingerprint)
+
+    def _set_telemetry_backfill_secret_fingerprint(self, fingerprint: str) -> None:
+        with closing(self._connect()) as connection, connection:
+            connection.execute(
+                """
+                insert into telemetry_backfill_state (id, secret_fingerprint, updated_at)
+                values (1, ?, ?)
+                on conflict (id) do update set
+                    secret_fingerprint = excluded.secret_fingerprint,
+                    updated_at = excluded.updated_at
+                """,
+                (fingerprint, utc_now_iso()),
+            )
