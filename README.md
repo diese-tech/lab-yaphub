@@ -1,10 +1,18 @@
 # YapHub
 
+[![Website](https://img.shields.io/badge/Website-Visit%20YapHub-5865F2?style=flat-square&logo=githubpages&logoColor=white)](https://diese-tech.github.io/lab-yaphub/)
+[![GitHub stars](https://img.shields.io/github/stars/diese-tech/lab-yaphub?style=flat-square&logo=github)](https://github.com/diese-tech/lab-yaphub/stargazers)
+[![GitHub forks](https://img.shields.io/github/forks/diese-tech/lab-yaphub?style=flat-square&logo=github)](https://github.com/diese-tech/lab-yaphub/network/members)
+[![GitHub issues](https://img.shields.io/github/issues/diese-tech/lab-yaphub?style=flat-square&logo=github)](https://github.com/diese-tech/lab-yaphub/issues)
+[![Top language](https://img.shields.io/github/languages/top/diese-tech/lab-yaphub?style=flat-square)](https://github.com/diese-tech/lab-yaphub)
+
 **Temporary Discord voice channels without the mega-bot baggage.**
 
 YapHub is a focused, VoiceMaster-style Discord bot that creates temporary voice rooms when members join a configured **Join to Yap** lobby. Members get their own room controls, servers can run multiple category-scoped lobbies, and YapHub automatically cleans rooms up when they are empty.
 
 > YapHub is intentionally narrow: temporary voice channels, done well. It is not trying to become a general-purpose Discord mega-bot.
+
+**[Visit the YapHub website](https://diese-tech.github.io/lab-yaphub/)** · **[Invite YapHub](https://discord.com/oauth2/authorize?client_id=1503456577666154506&permissions=277313817680&integration_type=0&scope=bot+applications.commands)** · **[Report an issue](https://github.com/diese-tech/lab-yaphub/issues)**
 
 ## Add YapHub to Discord
 
