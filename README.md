@@ -326,18 +326,31 @@ value; the landing page's JS renders `—` when the key is absent. The other
 fields never depend on the secret (plain counters / existing config, no
 identity involved), so a `0` there is always a real, honest zero.
 
-**`servers_served` backfills from existing guild config the first time the
+**`servers_served` backfills from existing profile config the first time the
 secret goes live.** `telemetry_known_guilds` (what `servers_served` counts)
 only grows from `record_room_created()` — so turning
 `YAPHUB_ANALYTICS_SECRET` on for a deployment that's already had guilds set
 up and using it would otherwise show `servers_served: 0` until each of
 those guilds happens to create a *new* room. On every startup,
-`backfill_known_guilds()` (`services/telemetry.py`) folds every guild
-already present in `guild_configs` (i.e. every guild that's run
-`/yap setup`) into `telemetry_known_guilds`, hashed with whatever secret is
-currently configured. It's a no-op without the secret, and idempotent
-(`insert or ignore`) so it's safe to run on every boot rather than as a
-one-off migration.
+`backfill_known_guilds()` (`services/telemetry.py`) folds every guild with
+at least one configured profile (`temp_vc_profiles` — i.e. a guild that's
+actually run `/yap setup` or `/yap profile create`, not merely one that
+peeked at `/yap config`) into `telemetry_known_guilds`, hashed with the
+currently configured secret. It's a no-op without the secret.
+
+**The backfill is guarded against secret rotation.** A rotated
+`YAPHUB_ANALYTICS_SECRET` hashes the same guild differently, and
+`record_known_guild`'s `insert or ignore` only dedupes identical hashes —
+so blindly re-running the backfill after a rotation would insert a second,
+permanently-unmatchable row per guild and silently inflate
+`servers_served`. `backfill_known_guilds()` fingerprints the configured
+secret (`telemetry_backfill_state`, a single-row table — the fingerprint
+itself is a plain SHA-256, never the HMAC keying used for pseudonymization)
+and compares it against the fingerprint from the last successful backfill.
+Same secret: backfill proceeds normally (idempotent, safe on every boot).
+Different secret: the backfill is skipped with a warning logged rather than
+guessing how to reconcile the stale entries — that's a deliberate choice
+left to whoever rotates the secret, not something the bot decides for you.
 
 **Deploying it.** Enable public networking for the Railway service
 (Settings → Networking → Generate Domain — the server binds `$PORT`, which

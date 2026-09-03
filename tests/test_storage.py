@@ -46,18 +46,39 @@ async def test_get_guild_config_missing_returns_none(storage):
     assert await storage.get_guild_config(guild_id=999) is None
 
 
-async def test_list_all_guild_ids_returns_every_configured_guild(storage):
-    await storage.get_or_create_guild_config(guild_id=111)
-    await storage.get_or_create_guild_config(guild_id=222)
+async def test_list_guild_ids_with_profiles_returns_every_guild_with_a_profile(storage):
+    await storage.create_profile(
+        guild_id=111,
+        name="Default",
+        join_channel_id=10,
+        target_category_id=None,
+        created_by_user_id=1,
+    )
+    await storage.create_profile(
+        guild_id=222,
+        name="Default",
+        join_channel_id=20,
+        target_category_id=None,
+        created_by_user_id=1,
+    )
 
-    guild_ids = await storage.list_all_guild_ids()
+    guild_ids = await storage.list_guild_ids_with_profiles()
 
     assert sorted(guild_ids) == [111, 222]
     assert all(isinstance(guild_id, int) for guild_id in guild_ids)
 
 
-async def test_list_all_guild_ids_is_empty_with_no_configured_guilds(storage):
-    assert await storage.list_all_guild_ids() == []
+async def test_list_guild_ids_with_profiles_excludes_a_guild_with_only_a_config_row(storage):
+    """get_or_create_guild_config() is also called by read-only paths like
+    /yap config -- a guild that only ran that must not count as "using
+    YapHub" if it never actually configured a profile."""
+    await storage.get_or_create_guild_config(guild_id=999)
+
+    assert await storage.list_guild_ids_with_profiles() == []
+
+
+async def test_list_guild_ids_with_profiles_is_empty_with_no_profiles(storage):
+    assert await storage.list_guild_ids_with_profiles() == []
 
 
 async def test_reset_guild_configuration_clears_profiles_and_config(storage):
@@ -731,3 +752,23 @@ async def test_public_stats_snapshot_survives_a_fresh_storage_instance(storage):
 
     row = await restarted.get_public_stats_snapshot()
     assert row["payload"] == '{"a":1}'
+
+
+# --- telemetry backfill secret fingerprint ------------------------------
+
+
+async def test_telemetry_backfill_secret_fingerprint_starts_absent(storage):
+    assert await storage.get_telemetry_backfill_secret_fingerprint() is None
+
+
+async def test_telemetry_backfill_secret_fingerprint_round_trips(storage):
+    await storage.set_telemetry_backfill_secret_fingerprint("abc123")
+
+    assert await storage.get_telemetry_backfill_secret_fingerprint() == "abc123"
+
+
+async def test_telemetry_backfill_secret_fingerprint_is_a_singleton_that_overwrites(storage):
+    await storage.set_telemetry_backfill_secret_fingerprint("old-fingerprint")
+    await storage.set_telemetry_backfill_secret_fingerprint("new-fingerprint")
+
+    assert await storage.get_telemetry_backfill_secret_fingerprint() == "new-fingerprint"

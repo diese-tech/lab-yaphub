@@ -32,7 +32,9 @@ def _bot(**storage_overrides):
         record_telemetry_event=AsyncMock(),
         record_known_user=AsyncMock(),
         record_known_guild=AsyncMock(),
-        list_all_guild_ids=AsyncMock(return_value=[]),
+        list_guild_ids_with_profiles=AsyncMock(return_value=[]),
+        get_telemetry_backfill_secret_fingerprint=AsyncMock(return_value=None),
+        set_telemetry_backfill_secret_fingerprint=AsyncMock(),
     )
     defaults.update(storage_overrides)
     return types.SimpleNamespace(storage=types.SimpleNamespace(**defaults))
@@ -202,9 +204,9 @@ async def test_each_reliability_recorder_bumps_its_own_event_type(record_fn, exp
 # --- backfill_known_guilds ----------------------------------------------
 
 
-async def test_backfill_folds_every_configured_guild_when_secret_is_set(monkeypatch):
+async def test_backfill_folds_every_guild_with_a_profile_when_secret_is_set(monkeypatch):
     monkeypatch.setenv("YAPHUB_ANALYTICS_SECRET", "s3cret")
-    bot = _bot(list_all_guild_ids=AsyncMock(return_value=[100, 200]))
+    bot = _bot(list_guild_ids_with_profiles=AsyncMock(return_value=[100, 200]))
 
     await telemetry.backfill_known_guilds(bot)
 
@@ -213,21 +215,82 @@ async def test_backfill_folds_every_configured_guild_when_secret_is_set(monkeypa
     assert bot.storage.record_known_guild.await_count == 2
 
 
+async def test_backfill_stores_the_secret_fingerprint_after_a_successful_run(monkeypatch):
+    monkeypatch.setenv("YAPHUB_ANALYTICS_SECRET", "s3cret")
+    bot = _bot(list_guild_ids_with_profiles=AsyncMock(return_value=[100]))
+
+    await telemetry.backfill_known_guilds(bot)
+
+    bot.storage.set_telemetry_backfill_secret_fingerprint.assert_awaited_once_with(
+        telemetry._secret_fingerprint("s3cret")
+    )
+
+
 async def test_backfill_is_a_noop_without_the_secret(monkeypatch):
     """Without the secret there's nothing safe to derive -- and calling
     storage at all would be wasted work on every startup."""
     monkeypatch.delenv("YAPHUB_ANALYTICS_SECRET", raising=False)
-    bot = _bot(list_all_guild_ids=AsyncMock(return_value=[100, 200]))
+    bot = _bot(list_guild_ids_with_profiles=AsyncMock(return_value=[100, 200]))
 
     await telemetry.backfill_known_guilds(bot)
 
-    bot.storage.list_all_guild_ids.assert_not_called()
+    bot.storage.list_guild_ids_with_profiles.assert_not_called()
     bot.storage.record_known_guild.assert_not_called()
+
+
+async def test_backfill_proceeds_when_the_secret_matches_the_last_backfill(monkeypatch):
+    """The common case: same secret across restarts. Re-running is
+    idempotent (record_known_guild is `insert or ignore`), so this must
+    still fold guilds in every time, not just once ever."""
+    monkeypatch.setenv("YAPHUB_ANALYTICS_SECRET", "s3cret")
+    bot = _bot(
+        list_guild_ids_with_profiles=AsyncMock(return_value=[100]),
+        get_telemetry_backfill_secret_fingerprint=AsyncMock(
+            return_value=telemetry._secret_fingerprint("s3cret")
+        ),
+    )
+
+    await telemetry.backfill_known_guilds(bot)
+
+    bot.storage.record_known_guild.assert_awaited_once_with(telemetry.pseudonymous_guild_key(100))
+
+
+async def test_backfill_skips_when_the_secret_was_rotated(monkeypatch, caplog):
+    """A rotated secret hashes the same guild differently; record_known_guild's
+    `insert or ignore` only dedupes identical hashes, so blindly
+    re-backfilling here would insert a second, permanently-unmatchable row
+    per guild and inflate servers_served. Skip instead of guessing."""
+    monkeypatch.setenv("YAPHUB_ANALYTICS_SECRET", "new-secret")
+    bot = _bot(
+        list_guild_ids_with_profiles=AsyncMock(return_value=[100]),
+        get_telemetry_backfill_secret_fingerprint=AsyncMock(
+            return_value=telemetry._secret_fingerprint("old-secret")
+        ),
+    )
+
+    await telemetry.backfill_known_guilds(bot)
+
+    bot.storage.list_guild_ids_with_profiles.assert_not_called()
+    bot.storage.record_known_guild.assert_not_called()
+    bot.storage.set_telemetry_backfill_secret_fingerprint.assert_not_called()
+    assert "appears to have changed since the last telemetry backfill" in caplog.text
+
+
+async def test_backfill_never_raises_when_reading_the_stored_fingerprint_fails(monkeypatch, caplog):
+    monkeypatch.setenv("YAPHUB_ANALYTICS_SECRET", "s3cret")
+    bot = _bot(
+        get_telemetry_backfill_secret_fingerprint=AsyncMock(side_effect=RuntimeError("db down"))
+    )
+
+    await telemetry.backfill_known_guilds(bot)  # must not raise
+
+    bot.storage.list_guild_ids_with_profiles.assert_not_called()
+    assert "Failed to read telemetry backfill state" in caplog.text
 
 
 async def test_backfill_never_raises_when_listing_guild_ids_fails(monkeypatch, caplog):
     monkeypatch.setenv("YAPHUB_ANALYTICS_SECRET", "s3cret")
-    bot = _bot(list_all_guild_ids=AsyncMock(side_effect=RuntimeError("db down")))
+    bot = _bot(list_guild_ids_with_profiles=AsyncMock(side_effect=RuntimeError("db down")))
 
     await telemetry.backfill_known_guilds(bot)  # must not raise
 
@@ -240,7 +303,7 @@ async def test_backfill_continues_past_a_single_guild_write_failure(monkeypatch,
     independently best-effort, matching record_room_created's pattern."""
     monkeypatch.setenv("YAPHUB_ANALYTICS_SECRET", "s3cret")
     bot = _bot(
-        list_all_guild_ids=AsyncMock(return_value=[100, 200]),
+        list_guild_ids_with_profiles=AsyncMock(return_value=[100, 200]),
         record_known_guild=AsyncMock(side_effect=[RuntimeError("db down"), None]),
     )
 
@@ -248,3 +311,19 @@ async def test_backfill_continues_past_a_single_guild_write_failure(monkeypatch,
 
     assert bot.storage.record_known_guild.await_count == 2
     assert "Failed to backfill known guild for telemetry" in caplog.text
+
+
+async def test_backfill_never_raises_when_persisting_the_fingerprint_fails(monkeypatch, caplog):
+    """The guilds were already recorded successfully; a failure to persist
+    the fingerprint afterward is non-fatal -- worst case the next startup
+    re-backfills the same (already-idempotent) set."""
+    monkeypatch.setenv("YAPHUB_ANALYTICS_SECRET", "s3cret")
+    bot = _bot(
+        list_guild_ids_with_profiles=AsyncMock(return_value=[100]),
+        set_telemetry_backfill_secret_fingerprint=AsyncMock(side_effect=RuntimeError("db down")),
+    )
+
+    await telemetry.backfill_known_guilds(bot)  # must not raise
+
+    bot.storage.record_known_guild.assert_awaited_once()
+    assert "Failed to persist telemetry backfill fingerprint" in caplog.text

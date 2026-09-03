@@ -141,27 +141,60 @@ async def record_room_created(bot, guild_id: int, user_id: int) -> None:
             logger.exception("Failed to record known user for telemetry")
 
 
+def _secret_fingerprint(secret: str) -> str:
+    """A non-reversible fingerprint of the configured secret, stored only to
+    detect whether it changed between backfill runs. Never used for
+    pseudonymization itself -- that stays HMAC-keyed per entity, see
+    _pseudonymous_key."""
+    return hashlib.sha256(secret.encode("utf-8")).hexdigest()
+
+
 async def backfill_known_guilds(bot) -> None:
-    """One-time-per-startup reconciliation: fold every guild that already
-    has a stored config (ran /yap setup) into telemetry_known_guilds.
+    """One-time-per-secret reconciliation: fold every guild with an actual
+    configured profile (ran /yap setup or /yap profile create) into
+    telemetry_known_guilds.
 
     Without this, servers_served only grows from record_room_created()
     going forward -- so a guild that configured and used YapHub *before*
     YAPHUB_ANALYTICS_SECRET was ever set (or before this deployment) would
     sit uncounted until it happens to create a fresh room after the secret
-    is live. guild_configs already stores raw guild_id for the operational
-    reason of running the bot -- this hashes each one with the
-    now-configured secret before writing it to the pseudonymous table,
-    exactly like the runtime path does for a new guild. A no-op if the
-    secret isn't configured (nothing safe to derive). Idempotent
-    (record_known_guild is `insert or ignore`), so safe to call on every
-    startup. Best-effort: never raises.
+    is live.
+
+    Guarded against secret rotation: a rotated secret hashes the same guild
+    differently, and record_known_guild's `insert or ignore` only dedupes
+    identical hashes -- so blindly re-running this on every startup after a
+    rotation would insert a second, permanently-unmatchable row per guild
+    and silently inflate servers_served. This function fingerprints the
+    configured secret and compares it against the fingerprint stored from
+    the last successful backfill (see storage.py's
+    get/set_telemetry_backfill_secret_fingerprint); a mismatch means the
+    secret changed, and the backfill is skipped (with a warning) rather
+    than guessing how to reconcile the old entries -- that needs a human
+    decision (see README's Usage Telemetry section). Best-effort: never
+    raises.
     """
-    if not analytics_secret_configured():
+    secret = _get_secret()
+    if secret is None:
+        return
+    fingerprint = _secret_fingerprint(secret)
+
+    try:
+        previous_fingerprint = await bot.storage.get_telemetry_backfill_secret_fingerprint()
+    except Exception:
+        logger.exception("Failed to read telemetry backfill state")
+        return
+
+    if previous_fingerprint is not None and previous_fingerprint != fingerprint:
+        logger.warning(
+            "%s appears to have changed since the last telemetry backfill; "
+            "skipping backfill to avoid inflating servers_served with "
+            "duplicate guild entries. See README's Usage Telemetry section.",
+            ANALYTICS_SECRET_ENV_VAR,
+        )
         return
 
     try:
-        guild_ids = await bot.storage.list_all_guild_ids()
+        guild_ids = await bot.storage.list_guild_ids_with_profiles()
     except Exception:
         logger.exception("Failed to list guild ids for telemetry backfill")
         return
@@ -174,6 +207,11 @@ async def backfill_known_guilds(bot) -> None:
             await bot.storage.record_known_guild(guild_key)
         except Exception:
             logger.exception("Failed to backfill known guild for telemetry")
+
+    try:
+        await bot.storage.set_telemetry_backfill_secret_fingerprint(fingerprint)
+    except Exception:
+        logger.exception("Failed to persist telemetry backfill fingerprint")
 
 
 async def record_room_create_failed(bot) -> None:
