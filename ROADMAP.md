@@ -102,13 +102,6 @@ Non-blocking, tracked here so they don't get lost:
   `enabled` boolean columns proposed in the original Issue #5 schema.
   Nothing depends on them today; needs a decision on whether to add them or
   drop them from the plan.
-- The landing page (`docs/index.html`) stats ("servers using YapHub", "temp
-  rooms created") are still placeholder text. Wiring them to live data needs
-  an architecture decision, since the bot (Railway) and the static site
-  (GitHub Pages) don't share a filesystem. Options: (a) the bot periodically
-  commits an updated `docs/stats.json` via the GitHub API, or (b) the bot
-  exposes a small public JSON endpoint the page fetches directly. Neither
-  has been decided.
 
 ## History
 
@@ -123,3 +116,10 @@ Non-blocking, tracked here so they don't get lost:
 - **2026-07-19** — This roadmap created to carry Phases 2–4 forward as a
   version-controlled document instead of re-deriving scope from a closed
   issue's comment thread each time.
+- **2026-09-02** — The landing page stats architecture decision (previously
+  tracked as an open item here) was made: the bot exposes a small public
+  JSON endpoint (`services/stats_server.py`, `GET /stats.json`) rather than
+  committing a `docs/stats.json` file to the repo via the GitHub API.
+  Shipped in #23 (durable telemetry) and #24/#26 (the public stats
+  endpoint). See README.md's "Public Stats Endpoint" section for the full
+  design rationale.
