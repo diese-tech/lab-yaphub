@@ -258,10 +258,81 @@ warning rather than failing startup over an optional feature. Every
 telemetry call is best-effort: a telemetry failure can never affect the
 temp-room lifecycle it measures.
 
-Telemetry is internal. Nothing in this repo currently exposes it publicly —
 `storage.get_telemetry_summary()` is the one read path, returning aggregate
-counts only (never a pseudonymous key), and is meant for a future
-cached/rate-limited public surface, not direct exposure.
+counts only (never a pseudonymous key). The only thing built on top of it is
+the cached, privacy-filtered public snapshot described next — nothing else
+in the codebase reads telemetry directly.
+
+## Public Stats Endpoint
+
+The landing page (`docs/index.html`, served via GitHub Pages) shows adoption
+numbers — servers using YapHub, rooms created — pulled from a small public
+JSON endpoint the bot itself serves (`services/stats_server.py`):
+
+```
+GET /stats.json
+```
+
+**Why an endpoint, not a committed file.** The bot (Railway) and the static
+site (GitHub Pages) don't share a filesystem. The alternative — the bot
+pushing an updated `docs/stats.json` to the repo via a GitHub API token —
+was considered and rejected: it would mean storing a repo-write credential
+in Railway and giving the bot process write access to its own source, a
+bigger blast-radius consideration than one additional public, unauthenticated,
+read-only route with nothing sensitive to leak. `aiohttp` is already a
+discord.py dependency, so this adds no new library, and Railway's public
+networking is a first-class, well-supported path for exactly this.
+
+**It is a cache, not a live view — and the HTTP route never touches
+storage.** `services/public_stats.py` builds a snapshot from
+`get_telemetry_summary()` about once a day (`~10:00 AM ET`, DST-safe via
+`zoneinfo`; see `stats_refresh_loop` in `bot.py`), persists it to SQLite
+(`public_stats_snapshot` — one row, always the latest), and writes it into
+`bot.public_stats_cache`, a plain in-process attribute. The HTTP handler in
+`services/stats_server.py` reads only that attribute — it never calls
+`bot.storage`. This is deliberate: every real bot operation (room creation,
+cleanup, reconciliation) offloads its SQLite calls through the same shared,
+bounded `asyncio.to_thread` executor, and a public, unauthenticated,
+unrate-limited route reading the database per request could let a request
+flood queue enough work on that shared pool to delay real Discord
+operations. Reading a plain attribute instead makes that impossible by
+construction. `bot.py`'s `setup_hook` warms `public_stats_cache` from the
+durable snapshot once at startup, so a restart doesn't serve `503` while
+waiting for the next daily refresh. A failed refresh — a storage error,
+whatever — leaves the previous cached snapshot (both the SQLite row and the
+in-memory cache) exactly as it was; nothing here ever clears the cache, only
+replaces it on a *successful* refresh. The landing page shows the cached
+snapshot's `as_of` timestamp as a "Stats as of …" label specifically so this
+is never mistaken for real-time data.
+
+**Payload is allowlisted, not filtered.** `build_public_snapshot()` lists the
+public fields explicitly (`rooms_created_total`, `rooms_created_7d`,
+`rooms_created_30d`, `active_profiles`, `as_of`, plus `servers_served` and
+`unique_users_served` — see below) rather than returning everything and
+subtracting what's sensitive — so a new internal reliability counter added
+to `get_telemetry_summary()` later cannot silently leak into the public
+payload just by existing. Nothing here is ever a raw or pseudonymous Discord
+identifier, a guild/user list, or live `active_temp_channels` state.
+
+**`servers_served` / `unique_users_served` are omitted, not zeroed, without
+`YAPHUB_ANALYTICS_SECRET`.** Those two fields depend on the pseudonymous
+unique-entity tables in `services/telemetry.py`, which only get written to
+when the analytics secret is configured (see "Usage Telemetry" above).
+Without it, the underlying counts sit at a structural zero regardless of
+real usage — publishing that as `servers_served: 0` would tell an
+established, busy deployment it has no servers. `build_public_snapshot()`
+omits both keys entirely in that case rather than publish a fake exact
+value; the landing page's JS renders `—` when the key is absent. The other
+fields never depend on the secret (plain counters / existing config, no
+identity involved), so a `0` there is always a real, honest zero.
+
+**Deploying it.** Enable public networking for the Railway service
+(Settings → Networking → Generate Domain — the server binds `$PORT`, which
+Railway sets automatically) and paste the resulting URL into the
+`STATS_ENDPOINT` constant near the bottom of `docs/index.html`. If the
+server fails to bind (a port conflict, a sandbox with no public networking),
+it logs and the bot continues normally — the stats endpoint is supplementary
+and can never block Discord functionality.
 
 ## Railway Volume Setup
 

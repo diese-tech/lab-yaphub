@@ -1,2 +1,5 @@
 discord.py>=2.4.0
 python-dotenv>=1.0.1
+# Already a transitive dependency of discord.py; declared directly because
+# services/stats_server.py imports aiohttp.web itself.
+aiohttp>=3.9

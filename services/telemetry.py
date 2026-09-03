@@ -83,6 +83,14 @@ def _get_secret() -> str | None:
     return None
 
 
+def analytics_secret_configured() -> bool:
+    """Whether YAPHUB_ANALYTICS_SECRET is set, without the missing-secret
+    warning or logging side effects _get_secret() has -- for callers (the
+    public stats builder) that need to branch on this on every call and
+    must not spam the log doing it."""
+    return bool(os.getenv(ANALYTICS_SECRET_ENV_VAR))
+
+
 def _pseudonymous_key(namespace: str, discord_id: int) -> str | None:
     secret = _get_secret()
     if secret is None:

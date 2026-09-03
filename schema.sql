@@ -84,3 +84,16 @@ create table if not exists telemetry_known_guilds (
   guild_key text primary key,
   first_seen_at text not null
 );
+
+-- The one cached snapshot served by the public stats endpoint
+-- (services/stats_server.py). Singleton row (id is always 1) holding the
+-- last successfully generated snapshot; a failed refresh simply does not
+-- write here, leaving the previous good snapshot in place. `payload` is
+-- the exact JSON already served to the public -- built once by
+-- services/public_stats.py through its field allowlist, not re-filtered
+-- on every request.
+create table if not exists public_stats_snapshot (
+  id integer primary key check (id = 1),
+  as_of text not null,
+  payload text not null
+);

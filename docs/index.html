@@ -1061,7 +1061,6 @@ html {
             <div class="stats__item">
               <strong class="stats__value" id="rooms-created">—</strong>
               <span class="stats__label">Temp rooms created</span>
-              <small class="stats__meta">All-time counter soon</small>
             </div>
           </div>
         </div>
@@ -1265,18 +1264,64 @@ html {
     </footer>
   </div>
   <script>
-    fetch('./stats.json', { cache: 'no-store' })
-      .then((response) => response.ok ? response.json() : Promise.reject())
-      .then((stats) => {
-        document.getElementById('guild-count').textContent = Number.isFinite(stats.guildCount) ? stats.guildCount.toLocaleString() : '0';
-        document.getElementById('rooms-created').textContent = Number.isFinite(stats.tempRoomsCreated) ? stats.tempRoomsCreated.toLocaleString() : '0';
-        document.getElementById('stats-updated').textContent = stats.updatedAt ? `Updated ${new Date(stats.updatedAt).toLocaleDateString()}` : 'Live stats source ready';
-      })
-      .catch(() => {
-        document.getElementById('guild-count').textContent = '—';
-        document.getElementById('rooms-created').textContent = '—';
-        document.getElementById('stats-updated').textContent = 'Stats unavailable';
-      });
+    // The bot (Railway) and this static site (GitHub Pages) don't share a
+    // filesystem, so stats are fetched live from the bot's own small
+    // public JSON endpoint (services/stats_server.py) rather than a file
+    // committed alongside this page. It serves a CACHED snapshot the bot
+    // refreshes about once a day -- not a live query -- which is exactly
+    // what the "Stats as of ..." label below is for.
+    //
+    // Set this to your deployed bot's public URL once Railway networking
+    // is enabled for the service (Settings -> Networking -> Generate
+    // Domain), then keep the /stats.json path as-is.
+    const STATS_ENDPOINT_PLACEHOLDER = 'https://REPLACE-WITH-YOUR-RAILWAY-DOMAIN/stats.json';
+    const STATS_ENDPOINT = 'https://yaphub-production-b205.up.railway.app/stats.json';
+
+    const statsFreshness = document.getElementById('stats-updated');
+
+    if (STATS_ENDPOINT === STATS_ENDPOINT_PLACEHOLDER) {
+      // Fail loudly and immediately rather than attempting a network
+      // request to a hostname that can never resolve: a DNS failure would
+      // surface as the exact same "Stats unavailable" text a real outage
+      // produces, which looks like a bug instead of the one-line
+      // configuration step it actually is.
+      document.getElementById('guild-count').textContent = '—';
+      document.getElementById('rooms-created').textContent = '—';
+      statsFreshness.textContent = 'Stats endpoint not configured yet';
+    } else {
+      fetch(STATS_ENDPOINT, { cache: 'no-store' })
+        .then((response) => (response.ok ? response.json() : Promise.reject(response.status)))
+        .then((stats) => {
+          // servers_served is OMITTED (not zeroed) by the backend when
+          // YAPHUB_ANALYTICS_SECRET isn't configured -- see
+          // services/public_stats.py's build_public_snapshot(). '0' here
+          // would misreport an established deployment as having no
+          // servers; '—' honestly says "not tracked yet." rooms_created_total
+          // never depends on the secret, so a real 0 there stays a real 0.
+          document.getElementById('guild-count').textContent =
+            Number.isFinite(stats.servers_served) ? stats.servers_served.toLocaleString() : '—';
+          document.getElementById('rooms-created').textContent =
+            Number.isFinite(stats.rooms_created_total) ? stats.rooms_created_total.toLocaleString() : '0';
+
+          const asOf = stats.as_of ? new Date(stats.as_of) : null;
+          statsFreshness.textContent =
+            asOf && !Number.isNaN(asOf.getTime())
+              ? `Stats as of ${asOf.toLocaleString('en-US', {
+                  month: 'long', day: 'numeric', year: 'numeric',
+                  hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
+                })}`
+              : 'Stats unavailable';
+        })
+        .catch((status) => {
+          document.getElementById('guild-count').textContent = '—';
+          document.getElementById('rooms-created').textContent = '—';
+          // 503 means the bot is up but hasn't produced a first snapshot yet
+          // (a very new deploy) -- distinct from a genuine fetch/network
+          // failure, worth saying so rather than a bare "unavailable."
+          statsFreshness.textContent =
+            status === 503 ? 'Stats not published yet' : 'Stats unavailable';
+        });
+    }
   </script>
 
   <script>

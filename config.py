@@ -32,3 +32,16 @@ TELEMETRY_EVENT_RECONCILE_CLEANUP_FAILED = "reconcile_cleanup_failed"
 # user/guild keys (see services/telemetry.py). Never committed, never
 # logged, never exposed publicly.
 ANALYTICS_SECRET_ENV_VAR = "YAPHUB_ANALYTICS_SECRET"
+
+# The public stats HTTP server (services/stats_server.py) binds 0.0.0.0 so
+# Railway's proxy can reach it, on $PORT -- Railway's standard convention
+# for "this process wants a public port" -- falling back to 8080 for local
+# runs where nothing sets it.
+STATS_SERVER_HOST = "0.0.0.0"
+STATS_SERVER_PORT = int(os.getenv("PORT", "8080"))
+
+# How often the cached public stats snapshot is refreshed from durable
+# telemetry. discord.ext.tasks' `time=` scheduling (see bot.py) runs this
+# once at (approximately) this wall-clock time daily, DST-safe via zoneinfo.
+STATS_REFRESH_HOUR_ET = 10
+STATS_REFRESH_MINUTE_ET = 0
