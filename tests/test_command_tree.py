@@ -16,6 +16,8 @@ from discord.ext import commands
 from commands import YapGroup
 
 EXPECTED_COMMAND_NAMES = {
+    "yap recovery list",
+    "yap recovery resolve",
     "yap setup",
     "yap help",
     "yap config",
