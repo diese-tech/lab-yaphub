@@ -139,7 +139,8 @@ class ApiRecovery:
         if status == 429:
             scope = headers.get("X-RateLimit-Scope", "").lower()
             local = (
-                scope in {"user", "shared"} and body is not None and body.get("global") is not True
+                scope in {"user", "shared"} and body is not None
+                and ("global" not in body or body["global"] is False)
                 and headers.get("X-RateLimit-Global", "").lower() in {"", "false"}
                 and bool(headers.get("Via")) and bool(headers.get("X-RateLimit-Bucket"))
             )

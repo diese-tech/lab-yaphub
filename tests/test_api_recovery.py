@@ -10,7 +10,7 @@ from aiohttp import web
 from discord.http import HTTPClient, Route
 
 from services.api_recovery import (
-    AmbiguousMutation, ApiDeferred, ApiRecovery, ExplicitRejection, RecoveryHTTPClient, RequestInfo,
+    AmbiguousMutation, ApiDeferred, ApiRecovery, ExplicitRejection, RecoveryHTTPClient, RequestInfo, url_info,
 )
 from services.stats_server import build_stats_app
 from storage import Storage
@@ -161,3 +161,50 @@ async def test_health_reports_liveness_without_false_readiness(server):
                     assert response.status == expected
     finally:
         await runner.cleanup()
+
+
+@pytest.mark.parametrize("retry", ["nan", "-1", "0", "invalid", "inf"])
+async def test_invalid_retry_timing_increases_backoff_without_shortening(api, retry):
+    info = RequestInfo("GET", "/users/@me")
+    response = SimpleNamespace(status=429, headers={"Retry-After": retry})
+    await api.observe(info, response, None, 0.1)
+    first = api.retry_at()
+    assert 59 <= first - time.time() <= 61
+    await api.observe(info, response, None, 0.1)
+    assert api.retry_at() > first + 59
+
+
+async def test_ambiguous_global_metadata_is_not_treated_as_resource_limit(api):
+    await api.observe(RequestInfo("DELETE", "/channels/{channel_id}", "1"),
+                      SimpleNamespace(status=429, headers={"Via": "edge", "X-RateLimit-Scope": "user",
+                                                          "X-RateLimit-Bucket": "bucket", "Retry-After": "60"}),
+                      {"global": "false"}, 0.1)
+    assert api.blocked()
+
+
+async def test_probe_rejection_renews_pause_without_another_mutation(api, server, monkeypatch):
+    url, attempts, replies = server
+    monkeypatch.setattr(Route, "BASE", url + "/api/v10")
+    replies.append((429, {"Retry-After": "0.02"}, {"message": "blocked"}))
+    client = await client_for(api)
+    try:
+        with pytest.raises(ExplicitRejection):
+            await client.request(route(url, "POST", "/guilds/{guild_id}/channels", guild_id=1))
+        await asyncio.sleep(0.03)
+        replies.append((429, {"Retry-After": "60"}, {"message": "blocked"}))
+        with pytest.raises(ExplicitRejection):
+            await client.request(route(url, "DELETE", "/channels/{channel_id}", channel_id=2))
+        with pytest.raises(ApiDeferred):
+            await client.request(route(url, "DELETE", "/channels/{channel_id}", channel_id=2))
+        assert [method for method, _ in attempts] == ["POST", "GET"]
+        assert api.retry_at() > time.time() + 59
+    finally:
+        await client.close()
+
+
+def test_webhook_and_interaction_urls_are_sanitized():
+    from yarl import URL
+    for path in ("/api/v10/webhooks/123/secret-token?secret=value",
+                 "/api/v10/interactions/123/secret-token/callback?secret=value"):
+        info = url_info("POST", URL("https://discord.com" + path))
+        assert "secret" not in info.path and "secret" not in info.key
