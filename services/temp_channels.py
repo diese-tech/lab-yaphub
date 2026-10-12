@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 import discord
 
 from config import DEFAULT_TEMP_CHANNEL_PREFIX, RECONCILE_MIN_ROOM_AGE_SECONDS
+from services.create_backoff import CreateBackoff, RoomCreationPaused
 from services.notifications import notify_duplicate_room
 from services.ownership import active_channel_ids
 from services.panel import send_room_panel
@@ -479,13 +480,24 @@ async def _create_temp_room_locked(
     if default_limit:
         create_kwargs["user_limit"] = max(0, min(99, int(default_limit)))
 
+    gate = getattr(bot, "room_create_backoff", None)
+    if gate is None:
+        gate = bot.room_create_backoff = CreateBackoff()
     try:
-        temp_channel = await guild.create_voice_channel(
+        temp_channel = await gate.create(
+            guild,
             name=build_temp_channel_name(member, profile, prefix),
             category=category,
             reason=f"YapHub temp VC for user {member.id}",
             **create_kwargs,
         )
+    except RoomCreationPaused as error:
+        logger.info(
+            "temp_room create_paused guild=%s member=%s lobby=%s retry_after=%.1f",
+            guild.id, member.id, lobby_channel.id, error.retry_after,
+        )
+        await record_room_create_failed(bot)
+        return
     except (discord.Forbidden, discord.HTTPException):
         # Deliberately re-raised, not swallowed here: the caller in bot.py
         # already catches broadly around create_temp_room and logs
