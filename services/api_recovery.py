@@ -9,6 +9,7 @@ import re
 import time
 from collections import Counter, deque
 from dataclasses import dataclass
+from email.utils import parsedate_to_datetime
 
 import aiohttp
 import discord
@@ -32,6 +33,28 @@ class ExplicitRejection(ApiDeferred):
 
 class AmbiguousMutation(Exception):
     """A channel create may have reached Discord; never replay it blindly."""
+
+
+def retry_delay(headers, body, now):
+    value = headers.get("Retry-After")
+    if value:
+        try:
+            delay = float(value)
+        except (TypeError, ValueError):
+            try:
+                when = parsedate_to_datetime(value)
+                delay = when.timestamp() - now if when.tzinfo else 0
+            except (TypeError, ValueError, OverflowError):
+                delay = 0
+        if math.isfinite(delay) and delay > 0:
+            return delay
+    value = (body or {}).get("retry_after")
+    if isinstance(value, bool):
+        raise ValueError("Boolean retry timing")
+    delay = float(value)
+    if not math.isfinite(delay) or delay <= 0:
+        raise ValueError("Invalid retry timing")
+    return delay
 
 
 @dataclass(frozen=True)
@@ -76,6 +99,7 @@ class ApiRecovery:
         self.probes = {}
         self.initialized = False
         self.events = deque()
+        self.transmissions = deque()
         self.deferred = 0
 
     async def initialize(self):
@@ -149,9 +173,7 @@ class ApiRecovery:
                 previous = self.states.get(key, {})
                 attempt = previous.get("attempt", 0) + 1
                 try:
-                    delay = float(headers.get("Retry-After") or (body or {}).get("retry_after", ""))
-                    if not math.isfinite(delay) or delay <= 0:
-                        raise ValueError
+                    delay = retry_delay(headers, body, now)
                     source = "discord"
                 except (TypeError, ValueError):
                     delay = min(60 * 2 ** min(attempt - 1, 4), 900)
@@ -186,8 +208,9 @@ class ApiRecovery:
     def metrics(self):
         now = time.time()
         counts = Counter(status for at, status in self.events if at >= now - 600)
-        return {"requests_10m": sum(counts.values()), "http_401_10m": counts[401],
-                "http_403_10m": counts[403], "http_429_10m": counts[429], "deferred": self.deferred}
+        return {"requests_10m": sum(at >= now - 600 for at in self.transmissions), "http_401_10m": counts[401],
+                "http_403_10m": counts[403], "http_429_10m": counts[429], "transport_errors_10m": counts[0],
+                "deferred": self.deferred}
 
     def trace(self):
         trace = aiohttp.TraceConfig()
@@ -195,7 +218,22 @@ class ApiRecovery:
         async def start(session, ctx, params):
             ctx.info = request_context.get() or url_info(params.method, params.url)
             ctx.started = time.monotonic()
+            ctx.send_count = 0
             await self.admit(ctx.info)
+
+        async def headers(session, ctx, params):
+            # In the pinned aiohttp writer this supported hook runs before
+            # header serialization/writing, including connection retries.
+            await self.admit(ctx.info)
+            if ctx.info.creates_channel and ctx.send_count:
+                raise AmbiguousMutation("Channel create transmission cannot be replayed")
+            ctx.send_count += 1
+            now = time.time()
+            self.transmissions.append(now)
+            while self.transmissions and self.transmissions[0] < now - 600:
+                self.transmissions.popleft()
+            logger.info("api transmission method=%s route=%s transport_attempt=%s",
+                        ctx.info.method, ctx.info.path, ctx.send_count)
 
         async def end(session, ctx, params):
             body = None
@@ -213,10 +251,14 @@ class ApiRecovery:
         async def exception(session, ctx, params):
             if isinstance(params.exception, ApiDeferred):
                 raise params.exception
+            self.events.append((time.time(), 0))
+            logger.warning("api transport_failed method=%s route=%s exception_type=%s",
+                           ctx.info.method, ctx.info.path, type(params.exception).__name__)
             if getattr(ctx, "info", None) and ctx.info.creates_channel:
                 raise AmbiguousMutation("Discord create transport failed") from params.exception
 
         trace.on_request_start.append(start)
+        trace.on_request_headers_sent.append(headers)
         trace.on_request_end.append(end)
         trace.on_request_exception.append(exception)
         return trace
@@ -275,6 +317,8 @@ def status_snapshot(bot):
             "metrics": api.metrics() if api else {}, "pending_joins": getattr(bot, "pending_join_count", 0),
             "pending_cleanup": getattr(bot, "pending_cleanup_count", 0),
             "unresolved_creations": getattr(bot, "unresolved_creation_count", 0),
+            "queue_overflow": getattr(bot, "queue_overflow_count", 0),
+            "last_queue_wait_seconds": getattr(bot, "queue_wait_seconds", 0),
             "last_room_success": getattr(bot, "last_room_success", None)}
 
 

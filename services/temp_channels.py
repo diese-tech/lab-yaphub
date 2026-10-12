@@ -46,7 +46,7 @@ async def delete_managed_channel(channel: discord.VoiceChannel, reason: str) -> 
         await channel.delete(reason=reason)
         return True
     except ApiDeferred:
-        return False
+        raise
     except discord.NotFound:
         logger.info(
             "temp_room delete_already_gone guild=%s channel=%s",

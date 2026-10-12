@@ -120,21 +120,21 @@ async def test_reconciliation_cannot_run_two_passes_at_once():
     """Overlapping passes race each other into deleting the same room twice
     and clobber each other's view of what is tracked."""
     import asyncio
-    from unittest.mock import patch
+    from types import SimpleNamespace
 
     bot = bot_module.YapHubBot.__new__(bot_module.YapHubBot)
     bot.reconcile_lock = asyncio.Lock()
     overlapping = []
     depth = {"n": 0}
 
-    async def _slow_reconcile(_bot):
+    async def _slow_reconcile():
         depth["n"] += 1
         overlapping.append(depth["n"])
         await asyncio.sleep(0)
         depth["n"] -= 1
 
-    with patch("bot.reconcile_active_temp_channels", new=_slow_reconcile):
-        await asyncio.gather(*(bot.reconcile_active_temp_channels() for _ in range(4)))
+    bot.lifecycle_recovery = SimpleNamespace(schedule_reconcile=_slow_reconcile)
+    await asyncio.gather(*(bot.reconcile_active_temp_channels() for _ in range(4)))
 
     assert max(overlapping) == 1
 

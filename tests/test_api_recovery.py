@@ -32,6 +32,11 @@ async def server():
         attempts.append((request.method, request.path))
         if replies:
             status, headers, payload = replies.pop(0)
+            if status == 0:
+                if callable(payload):
+                    await payload()
+                request.transport.close()
+                return web.Response()
             return web.Response(body=json.dumps(payload).encode(), status=status,
                                 headers={"Content-Type": "application/json", **headers})
         return web.Response(body=b'{"id":"123"}', headers={"Content-Type": "application/json"})
@@ -208,3 +213,34 @@ def test_webhook_and_interaction_urls_are_sanitized():
                  "/api/v10/interactions/123/secret-token/callback?secret=value"):
         info = url_info("POST", URL("https://discord.com" + path))
         assert "secret" not in info.path and "secret" not in info.key
+
+
+async def test_native_connection_retry_is_counted_and_guarded_before_writing(api, server):
+    url, attempts, replies = server
+    replies.append((0, {}, None))
+    client = await client_for(api)
+    try:
+        await client.request(route(url, "GET", "/channels/{channel_id}", channel_id=1))
+        assert len(attempts) == api.metrics()["requests_10m"] == 2
+        async def pause_after_first_send():
+            await api.observe(RequestInfo("GET", "/users/@me"),
+                              SimpleNamespace(status=429, headers={"Retry-After": "600"}), None, 0.1)
+        replies.append((0, {}, pause_after_first_send))
+        with pytest.raises(ApiDeferred):
+            await client.request(route(url, "GET", "/channels/{channel_id}", channel_id=1))
+        assert len(attempts) == api.metrics()["requests_10m"] == 3
+    finally:
+        await client.close()
+
+
+async def test_retry_http_date_and_valid_json_timing_are_honored(api):
+    from email.utils import formatdate
+    now = time.time()
+    await api.observe(RequestInfo("GET", "/users/@me"),
+                      SimpleNamespace(status=429, headers={"Retry-After": formatdate(now + 3600, usegmt=True)}),
+                      None, 0.1)
+    assert api.retry_at() > now + 3598
+    await api.observe(RequestInfo("GET", "/users/@me"),
+                      SimpleNamespace(status=429, headers={"Retry-After": "malformed"}),
+                      {"retry_after": 7200}, 0.1)
+    assert api.retry_at() >= now + 7200

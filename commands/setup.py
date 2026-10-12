@@ -19,6 +19,7 @@ from commands.owner_controls import (
     unpermit_member,
 )
 from commands.profiles import ProfileGroup
+from commands.recovery import RecoveryGroup
 from config import JOIN_TO_CREATE_NAME
 from services.confirm import ConfirmView
 from services.permissions import require_manage_channels
@@ -52,6 +53,7 @@ class YapGroup(app_commands.Group):
         super().__init__(name="yap", description="YapHub temp VC controls")
         self.bot = bot
         self.add_command(ProfileGroup(bot))
+        self.add_command(RecoveryGroup(bot))
 
     @app_commands.command(name="setup", description="Create a Join to Yap lobby in a category")
     async def setup(

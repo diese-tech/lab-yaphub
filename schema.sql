@@ -119,3 +119,19 @@ create table if not exists api_cooldowns (
   route_key text not null,
   reason text not null
 );
+create table if not exists pending_joins (
+  guild_id text not null, user_id text not null, lobby_id text not null,
+  profile_id text not null, revision text not null, enqueued real not null,
+  due real not null, primary key(guild_id,user_id)
+);
+create table if not exists creation_intents (
+  id text primary key, guild_id text not null, user_id text not null,
+  lobby_id text not null, profile_id text not null, phase text not null,
+  channel_id text, created real not null, completed real
+);
+create unique index if not exists idx_open_creation_owner on creation_intents(guild_id,user_id)
+  where phase not in ('completed','cancelled');
+create table if not exists pending_cleanup (
+  channel_id text not null, guild_id text not null, leaver_id text not null,
+  due real not null, primary key(channel_id,leaver_id)
+);

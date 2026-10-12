@@ -20,13 +20,11 @@ from services.panel import RoomControlPanel
 from services.create_backoff import CreateBackoff
 from services.login_backoff import login_with_backoff
 from services.api_recovery import ApiDeferred, ApiRecovery, RecoveryHTTPClient, status_json
+from services.lifecycle_recovery import LifecycleRecovery
 from services.public_stats import refresh_public_stats_snapshot
 from services.stats_server import start_stats_server
 from services.telemetry import backfill_known_guilds
 from services.temp_channels import (
-    cleanup_temp_channel,
-    create_temp_room,
-    reconcile_active_temp_channels,
     runtime_active_channel_ids,
 )
 from storage import Storage
@@ -73,6 +71,7 @@ class YapHubBot(commands.Bot):
         self.status_cache = None
         self.status_task = None
         self.command_sync_pending = False
+        self.lifecycle_recovery = LifecycleRecovery(self)
         self.profile_cache: dict[int, Mapping[str, object]] = {}
         self.active_temp_channel_ids: set[int] = set()
         self.notification_cooldowns: dict[tuple[int, int], float] = {}
@@ -108,6 +107,7 @@ class YapHubBot(commands.Bot):
             self.refresh_status()
             await self.api_recovery.initialize()
             await self.load_runtime_cache()
+            await self.lifecycle_recovery.initialize()
 
         async def reset_http() -> None:
             await self.http.close()
@@ -151,6 +151,8 @@ class YapHubBot(commands.Bot):
             )
 
     async def close(self) -> None:
+        if getattr(self, "lifecycle_recovery", None) is not None:
+            await self.lifecycle_recovery.close()
         if getattr(self, "status_task", None) is not None:
             self.status_task.cancel()
         if self.stats_server_runner is not None:
@@ -163,10 +165,14 @@ class YapHubBot(commands.Bot):
             for profile in await self.storage.list_all_profiles()
         }
         self.active_temp_channel_ids = await runtime_active_channel_ids(self)
+        valid_profiles = {str(p["id"]) for p in self.profile_cache.values()}
+        for row in await self.lifecycle_recovery.store.rows("pending_joins"):
+            if row["profile_id"] not in valid_profiles:
+                await self.lifecycle_recovery.store.cancel(row["guild_id"], row["user_id"])
 
     async def reconcile_active_temp_channels(self) -> None:
         async with self.reconcile_lock:
-            await reconcile_active_temp_channels(self)
+            await self.lifecycle_recovery.schedule_reconcile()
 
     async def create_temp_room(
         self,
@@ -174,14 +180,14 @@ class YapHubBot(commands.Bot):
         lobby_channel: discord.VoiceChannel,
         profile: Mapping[str, object],
     ) -> None:
-        await create_temp_room(self, member, lobby_channel, profile)
+        await self.lifecycle_recovery.enqueue(member, lobby_channel, profile)
 
     async def cleanup_temp_channel(
         self,
         channel: discord.VoiceChannel,
         leaver: discord.Member | None = None,
     ) -> None:
-        await cleanup_temp_channel(self, channel, leaver)
+        await self.lifecycle_recovery.store.cleanup(channel.guild.id, channel.id, getattr(leaver, "id", 0))
 
 
 bot = YapHubBot()
@@ -244,6 +250,8 @@ async def on_ready() -> None:
         bot.started_once = True
         bot.runtime_initialized = True
 
+    await bot.lifecycle_recovery.scan()
+    bot.lifecycle_recovery.start()
     logger.info("Logged in as %s (%s)", bot.user, bot.user.id if bot.user else "unknown")
 
 
@@ -309,12 +317,25 @@ async def on_stats_refresh_loop_error(error: BaseException) -> None:
 
 
 @bot.event
+async def on_member_remove(member):
+    await bot.lifecycle_recovery.cancel_member_removal(member)
+
+
+@bot.event
+async def on_guild_remove(guild):
+    for row in await bot.lifecycle_recovery.store.rows("pending_joins"):
+        if row["guild_id"] == str(guild.id):
+            await bot.lifecycle_recovery.store.cancel(guild.id, row["user_id"])
+
+
+@bot.event
 async def on_guild_channel_delete(channel):
     if channel.id in bot.active_temp_channel_ids:
         row = await bot.storage.get_active_temp_channel(channel.id)
         if row is not None and int(row["guild_id"]) == channel.guild.id:
             await bot.storage.delete_active_temp_channel(channel.id)
             bot.active_temp_channel_ids.discard(channel.id)
+            await bot.lifecycle_recovery.store.deleted(channel.id)
             logger.info("temp_room gateway_deletion_confirmed channel=%s", channel.id)
 
 
@@ -339,6 +360,9 @@ async def on_voice_state_update(
     if before_channel is not None and before_channel == after_channel:
         return
 
+    if before_channel is not None and before_channel.id in bot.profile_cache:
+        await bot.lifecycle_recovery.cancel_departure(member, after_channel)
+
     if before_channel is not None and before_channel.id in bot.active_temp_channel_ids:
         try:
             await bot.cleanup_temp_channel(before_channel, leaver=member)
@@ -354,6 +378,8 @@ async def on_voice_state_update(
         profile = bot.profile_cache[after_channel.id]
         try:
             await bot.create_temp_room(member, after_channel, profile)
+        except ApiDeferred:
+            logger.info("voice_state join_deferred")
         except Exception:
             # Contained so one member's failure cannot take down the handler
             # for everyone else. create_temp_room already rolls back or

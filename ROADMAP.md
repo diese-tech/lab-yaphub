@@ -44,12 +44,15 @@ Not done, and intentionally out of scope for Phase 1 — see below.
 
 ## Production interruption recovery - issue #31
 
-The critical flow is lobby join, one usable room, and safe cleanup. Two controlled
-releases retain SQLite and one worker: A adds shared REST protection, durable
-cooldowns, tracing and health endpoints; B adds durable waiting joins, fair
-scheduling and recoverable creation/movement. Neither can create rooms during a
-Discord-enforced restriction. Full SAL/YSL lifecycle verification and a 24-hour
-observation window remain rollout acceptance gates.
+The critical flow is lobby join, one usable room, and safe cleanup. Release A
+([PR #33](https://github.com/diese-tech/lab-yaphub/pull/33)) adds shared REST
+protection, durable cooldowns, tracing and health endpoints. Release B adds
+SQLite-backed waiting joins and creation intents, fair scheduling, protected
+movement/panel recovery, and exact audit/staff attribution for ambiguous creates.
+Both retain SQLite and one worker. Neither can create rooms during a Discord
+restriction. Full SAL/YSL lifecycle verification and a 24-hour observation window
+remain production acceptance gates; implementation and deployment do not close
+those gates by themselves. See issue #31 for live rollout evidence.
 
 Hosting comparison and a prepared migration runbook are parallel investigations.
 Spending, migration, Postgres and automatic host failover remain separate decisions.

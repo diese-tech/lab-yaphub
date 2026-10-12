@@ -41,6 +41,7 @@ def wired(monkeypatch):
     cleanup = AsyncMock()
     monkeypatch.setattr(bot_module.bot, "create_temp_room", create)
     monkeypatch.setattr(bot_module.bot, "cleanup_temp_channel", cleanup)
+    monkeypatch.setattr(bot_module.bot.lifecycle_recovery, "cancel_departure", AsyncMock())
 
     return types.SimpleNamespace(
         guild=guild,

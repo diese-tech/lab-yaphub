@@ -210,8 +210,29 @@ Deferred cleanup preserves ownership records. An authenticated 404 or a verified
 gateway deletion event establishes absence; missing cache entries do not.
 Channel creation transport failures and 5xx responses stop hidden client retries:
 the mutation may have succeeded. Operators must verify the result before retrying.
-Durable waiting-user recovery and creation intents are the separate Release B.
-Until then, waiting users must leave and rejoin after availability returns.
+Release B adds durable waiting-user recovery and unique creation intents.
+Pending joins are keyed by (guild, owner), limited to 500 overall and 50 per
+guild, and retained while the user is waiting. Four lifecycle workers rotate
+guilds, with one reserved for cleanup and one operation per guild at a time.
+A later lobby join replaces the target. Configuration, permissions, membership
+and ownership are checked again before execution and membership before movement.
+
+An intent is persisted before create and its UUID is placed in the audit reason.
+Returned channel ID and ownership commit together. Deferred movement keeps the
+owned room protected from reconciliation. A departure queues cleanup instead of
+moving the member back. Panel backfill resumes without creating another room.
+Successful lifecycle telemetry commits once with the intent completion.
+
+A lost create response, 5xx, cancellation after transmission or interrupted
+tracking write leaves an unresolved intent that blocks another create for that
+owner. Exact attributable audit evidence can attach the channel automatically.
+Staff with Manage Channels can inspect `/yap recovery list`, then use
+`/yap recovery resolve intent_id:<uuid> verified:true channel:<exact room>`.
+Omit channel only after verifying no room exists. Matching room names is never
+sufficient evidence. These commands cannot be delivered through a blocked REST
+path; the unresolved intent remains durable until verification is possible.
+Startup/reconnect scans enqueue members still in configured lobbies; unavailable
+guild/member cache state waits for evidence instead of declaring departure.
 
 The HTTP listener starts before Discord login. `GET /healthz` reports process
 liveness; configure Railway health checks to use it. `GET /readyz` returns 503
