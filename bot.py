@@ -18,6 +18,7 @@ from config import (
 )
 from services.panel import RoomControlPanel
 from services.create_backoff import CreateBackoff
+from services.login_backoff import login_with_backoff
 from services.public_stats import refresh_public_stats_snapshot
 from services.stats_server import start_stats_server
 from services.telemetry import backfill_known_guilds
@@ -88,6 +89,15 @@ class YapHubBot(commands.Bot):
         # storage so a restart doesn't 503 while waiting for the first
         # scheduled refresh.
         self.public_stats_cache: str | None = None
+
+    async def login(self, token: str) -> None:
+        async def reset_http() -> None:
+            await self.http.close()
+            # Closing the session also closes its owned connector. Let
+            # static_login construct a fresh connector on the next attempt.
+            self.http.connector = discord.utils.MISSING
+
+        await login_with_backoff(super().login, reset_http, token)
 
     async def setup_hook(self) -> None:
         await self.storage.initialize()
