@@ -42,6 +42,18 @@ Delivered:
 
 Not done, and intentionally out of scope for Phase 1 — see below.
 
+## Production interruption recovery - issue #31
+
+The critical flow is lobby join, one usable room, and safe cleanup. Two controlled
+releases retain SQLite and one worker: A adds shared REST protection, durable
+cooldowns, tracing and health endpoints; B adds durable waiting joins, fair
+scheduling and recoverable creation/movement. Neither can create rooms during a
+Discord-enforced restriction. Full SAL/YSL lifecycle verification and a 24-hour
+observation window remain rollout acceptance gates.
+
+Hosting comparison and a prepared migration runbook are parallel investigations.
+Spending, migration, Postgres and automatic host failover remain separate decisions.
+
 ## Phase 2 — Postgres migration
 
 ### Trigger conditions
@@ -55,8 +67,11 @@ Per the original Issue #5 discussion, move off SQLite-on-Railway-Volume once
 - Uptime/restart-recovery matters as a real production SLA.
 - Guild count grows beyond a controlled beta.
 
-None of these have been hit yet as of this writing — YapHub is still a
-single worker in controlled beta.
+Production use in SAL, YSL and other configured servers has crossed the original
+beta and reliability triggers. Postgres is provisioned on Railway, but YapHub
+currently uses SQLite on its persistent volume. Migration needs separate storage
+implementation and backup/restore validation. A database link cannot cure an
+unconfirmed Discord restriction.
 
 ### Why (carried over from the original discussion)
 

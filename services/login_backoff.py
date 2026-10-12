@@ -5,6 +5,7 @@ import logging
 import math
 
 import discord
+from services.api_recovery import ApiDeferred
 
 logger = logging.getLogger("yaphub")
 
@@ -18,6 +19,10 @@ async def login_with_backoff(login, close_http, token):
             if attempt:
                 logger.info("startup login_recovered attempts=%s", attempt + 1)
             return
+        except ApiDeferred as error:
+            attempt += 1
+            await close_http()
+            await asyncio.sleep(error.retry_after)
         except discord.HTTPException as error:
             # Invalid credentials, permissions and other errors must remain
             # visible instead of being turned into an endless retry loop.

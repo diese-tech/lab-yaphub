@@ -190,45 +190,53 @@ Three voice/configuration warnings have been investigated:
 - **Single worker only.** Locks are in-process `asyncio.Lock` objects and SQLite lives on one Railway Volume. Multiple replicas could independently create rooms for the same owner. Horizontal scaling requires the Postgres and distributed-locking work tracked in `ROADMAP.md`.
 - Fallback duplicate-room notices depend on channel messaging availability and permissions.
 - Earlier in-memory MVP owner-control behavior that is not represented in the current canonical implementation should not be treated as supported merely because it existed historically.
-## Discord room-creation backoff
+## Discord REST recovery (Release A)
 
-discord.py handles normal Discord bucket and global rate limits. A 429
-that escapes as `HTTPException` can indicate an edge restriction rather
-than an ordinary quota. Do not infer the source from its message alone.
+All Discord REST traffic uses one admission coordinator, including login,
+creation, moves, deletion, panels, permissions, reconciliation and command sync.
+discord.py retains its ordinary bucket handling. An aiohttp trace checks every
+attempt, including internal retries, before transmission. A confirmed bucket
+restriction is keyed by bucket and major resource; global and unclassified
+restrictions pause all REST traffic. Requests already sent cannot be recalled.
 
-Room creation uses a gate around the create request. A confirmed non-global
-Discord API bucket pauses only the affected guild: the response must have
-`user` or `shared` scope, no affirmative or ambiguous global flag, a bucket
-identifier, `Via`, and a JSON content type. The create endpoint is keyed by
-guild. Global limits and unknown/edge responses pause creates across guilds.
-On an escaped 429 it pauses subsequent creates for the positive,
-finite `Retry-After` header, or a 60-second local safety pause if that
-header is unavailable. This fallback is not a Discord quota. Paused joins
-send no create request and write no room ownership record. Users must
-leave and rejoin the lobby after the pause; no automatic retry is queued.
-Existing room movement, panels and cleanup retain their existing behavior.
+UTC retry deadlines are persisted in `api_cooldowns` before admitting more
+requests and restored before login. Runtime waits use monotonic time. A positive
+finite Retry-After is never shortened. Missing or malformed timing uses a local
+60-second exponential wait capped at 15 minutes, not an assumed Discord quota.
+After expiry, one authenticated read probes a global restriction; a local
+restriction admits one eligible operation. Failed/cancelled probes remain paused.
 
-`temp_room api_rate_limited` logs the pause source plus allowlisted response
-metadata (`pause_scope`, `scope`, `global`, `via`, `cf_ray`, `content_type`). It does not
-log tokens or response bodies. Use these fields to distinguish ordinary
-API buckets from edge failures. If edge failures persist at low request
-volume, investigate Railway outbound IP/network behavior with provider
-support. Changing region or IP is not an automatic recovery action.
+Deferred cleanup preserves ownership records. An authenticated 404 or a verified
+gateway deletion event establishes absence; missing cache entries do not.
+Channel creation transport failures and 5xx responses stop hidden client retries:
+the mutation may have succeeded. Operators must verify the result before retrying.
+Durable waiting-user recovery and creation intents are the separate Release B.
+Until then, waiting users must leave and rejoin after availability returns.
 
-Rollback: revert the room-creation backoff change and deploy the previous
-revision. No schema or environment variable changes are required.
+The HTTP listener starts before Discord login. `GET /healthz` reports process
+liveness; configure Railway health checks to use it. `GET /readyz` returns 503
+while starting, disconnected, or globally restricted; local restrictions report
+partial availability. `GET /status.json` serves an in-memory aggregate snapshot,
+including observation/retry times and rolling request/error counts. Public reads
+perform no Discord or SQLite calls and expose no guild/user identifiers.
 
-## Discord startup recovery
+`api attempt`, `api rejected` and `api recovered` log normalized routes, status,
+duration and allowlisted bucket/scope/Cloudflare metadata. Never log credentials,
+request bodies or raw webhook URLs. A Cloudflare request ID is evidence for
+correlation, not proof that another Railway tenant caused the restriction.
 
-An escaped HTTP 429 during login keeps the process alive and retries after
-Discord's positive finite `Retry-After` header. Without valid timing, a
-local exponential pause starts at 60 seconds and caps at 15 minutes.
-This cap never shortens a supplied Discord retry interval. Cancellation
-interrupts the wait. Invalid credentials and non-429 errors propagate.
+## Rollout and recovery gates
 
-Failed login sessions are closed and their connector reset before the next
-attempt. Setup and gateway connection proceed only after login succeeds.
-`startup login_rate_limited` logs allowlisted response metadata without
-tokens or response bodies; `startup login_recovered` records recovery.
-Waiting is not proof that the bot is serving Discord: verify `Logged in as`
-and live room lifecycle activity before declaring it operational.
+Use Python 3.13 and the pinned Discord/aiohttp versions. Before each rollout,
+create a WAL-consistent SQLite backup with the backup API and verify its integrity:
+
+```powershell
+python -m scripts.backup --database /data/yaphub.sqlite3 --output /data/backups/recovery-a.sqlite3
+```
+
+Keep one production worker, no deployment overlap, and preserve all known retry
+deadlines. Additive tables are retained on rollback. An older revision that does
+not read durable cooldowns must not be restarted before those deadlines expire.
+A deployment marked SUCCESS is not acceptance: require gateway readiness and a
+complete create/move/panel/leave/cleanup flow in SAL and YSL with coordinated test
+users, followed by 24 hours of observation. See issue #31 and ROADMAP.md.

@@ -7,6 +7,7 @@ import discord
 
 from config import DEFAULT_TEMP_CHANNEL_PREFIX, RECONCILE_MIN_ROOM_AGE_SECONDS
 from services.create_backoff import CreateBackoff, RoomCreationPaused
+from services.api_recovery import ApiDeferred
 from services.notifications import notify_duplicate_room
 from services.ownership import active_channel_ids
 from services.panel import send_room_panel
@@ -44,6 +45,8 @@ async def delete_managed_channel(channel: discord.VoiceChannel, reason: str) -> 
     try:
         await channel.delete(reason=reason)
         return True
+    except ApiDeferred:
+        return False
     except discord.NotFound:
         logger.info(
             "temp_room delete_already_gone guild=%s channel=%s",
@@ -166,6 +169,8 @@ async def reconcile_active_temp_channels(bot) -> None:
         try:
             if await _reconcile_row(bot, row, channel_id):
                 tracked_ids.add(channel_id)
+        except ApiDeferred:
+            tracked_ids.add(channel_id)
         except Exception:
             # One unexpected failure (a storage error, a malformed row, an
             # unmodelled discord.py error) must not kill the pass or, via the
@@ -420,6 +425,8 @@ async def _create_temp_room_locked(
 
     try:
         existing_channel = await resolve_existing_owned_channel(bot, guild, member.id)
+    except ApiDeferred:
+        raise
     except UnresolvableTempChannel:
         logger.warning(
             "temp_room create_blocked guild=%s member=%s reason=existing_room_unresolvable",
@@ -484,18 +491,20 @@ async def _create_temp_room_locked(
     if gate is None:
         gate = bot.room_create_backoff = CreateBackoff()
     try:
-        temp_channel = await gate.create(
-            guild,
+        creator = guild.create_voice_channel if hasattr(bot, "api_recovery") else lambda **kwargs: gate.create(guild, **kwargs)
+        temp_channel = await creator(
             name=build_temp_channel_name(member, profile, prefix),
             category=category,
             reason=f"YapHub temp VC for user {member.id}",
             **create_kwargs,
         )
-    except RoomCreationPaused as error:
+    except (RoomCreationPaused, ApiDeferred) as error:
         logger.info(
             "temp_room create_paused guild=%s member=%s lobby=%s retry_after=%.1f",
             guild.id, member.id, lobby_channel.id, error.retry_after,
         )
+        if isinstance(error, ApiDeferred):
+            raise
         await record_room_create_failed(bot)
         return
     except (discord.Forbidden, discord.HTTPException):
@@ -559,6 +568,8 @@ async def _create_temp_room_locked(
 
     try:
         await member.move_to(temp_channel, reason="Moved to newly created Yap room")
+    except ApiDeferred:
+        raise
     except (discord.Forbidden, discord.HTTPException) as error:
         logger.exception(
             "temp_room move_failed guild=%s member=%s from_channel=%s to_channel=%s status=%s",

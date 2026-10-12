@@ -54,6 +54,43 @@ class Storage:
         connection.execute("pragma foreign_keys = on")
         return connection
 
+    async def list_api_cooldowns(self):
+        def read():
+            with closing(self._connect()) as connection:
+                return connection.execute("select * from api_cooldowns").fetchall()
+        return await asyncio.to_thread(read)
+
+    async def save_api_cooldown(self, state):
+        def write():
+            with closing(self._connect()) as connection, connection:
+                connection.execute(
+                    "insert into api_cooldowns values (?, ?, ?, ?, ?) on conflict(scope_key) do update set "
+                    "deadline_utc=max(deadline_utc, excluded.deadline_utc), attempt=excluded.attempt, "
+                    "route_key=excluded.route_key, reason=excluded.reason",
+                    (state["scope_key"], state["deadline_utc"], state["attempt"], state["route_key"], state["reason"]),
+                )
+        await asyncio.to_thread(write)
+
+    async def delete_api_cooldown(self, key):
+        def delete():
+            with closing(self._connect()) as connection, connection:
+                connection.execute("delete from api_cooldowns where scope_key = ?", (key,))
+        await asyncio.to_thread(delete)
+
+    async def backup(self, destination):
+        """SQLite backup API includes committed WAL state; verify before returning."""
+        def copy():
+            target = Path(destination)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if target.exists():
+                raise FileExistsError(target)
+            with closing(self._connect()) as source, closing(sqlite3.connect(target)) as backup:
+                source.backup(backup)
+                if backup.execute("pragma integrity_check").fetchone()[0] != "ok":
+                    raise RuntimeError("Backup integrity check failed")
+            return str(target)
+        return await asyncio.to_thread(copy)
+
     async def initialize(self) -> None:
         await asyncio.to_thread(self._initialize)
 

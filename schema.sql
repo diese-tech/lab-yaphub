@@ -112,3 +112,10 @@ create table if not exists telemetry_backfill_state (
   secret_fingerprint text not null,
   updated_at text not null
 );
+create table if not exists api_cooldowns (
+  scope_key text primary key,
+  deadline_utc real not null,
+  attempt integer not null,
+  route_key text not null,
+  reason text not null
+);
