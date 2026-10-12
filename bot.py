@@ -19,6 +19,7 @@ from config import (
 from services.panel import RoomControlPanel
 from services.create_backoff import CreateBackoff
 from services.login_backoff import login_with_backoff
+from services.api_recovery import ApiDeferred, ApiRecovery, RecoveryHTTPClient, status_json
 from services.public_stats import refresh_public_stats_snapshot
 from services.stats_server import start_stats_server
 from services.telemetry import backfill_known_guilds
@@ -65,6 +66,13 @@ class YapHubBot(commands.Bot):
         )
 
         self.storage = Storage(DATABASE_PATH)
+        self.api_recovery = ApiRecovery(self.storage)
+        self.http = RecoveryHTTPClient(self.http, self.api_recovery)
+        self._connection.http = self.http
+        self.runtime_initialized = False
+        self.status_cache = None
+        self.status_task = None
+        self.command_sync_pending = False
         self.profile_cache: dict[int, Mapping[str, object]] = {}
         self.active_temp_channel_ids: set[int] = set()
         self.notification_cooldowns: dict[tuple[int, int], float] = {}
@@ -91,6 +99,16 @@ class YapHubBot(commands.Bot):
         self.public_stats_cache: str | None = None
 
     async def login(self, token: str) -> None:
+        if not self.api_recovery.initialized:
+            self.status_cache = status_json(self)
+            try:
+                self.stats_server_runner = await start_stats_server(self, STATS_SERVER_HOST, STATS_SERVER_PORT)
+            except OSError:
+                logger.exception("Failed to start the public stats server; continuing Discord recovery")
+            self.refresh_status()
+            await self.api_recovery.initialize()
+            await self.load_runtime_cache()
+
         async def reset_http() -> None:
             await self.http.close()
             # Closing the session also closes its owned connector. Let
@@ -98,6 +116,10 @@ class YapHubBot(commands.Bot):
             self.http.connector = discord.utils.MISSING
 
         await login_with_backoff(super().login, reset_http, token)
+
+    def refresh_status(self):
+        self.status_cache = status_json(self)
+        self.status_task = asyncio.get_running_loop().call_later(1, self.refresh_status)
 
     async def setup_hook(self) -> None:
         await self.storage.initialize()
@@ -115,9 +137,8 @@ class YapHubBot(commands.Bot):
             )
 
         try:
-            self.stats_server_runner = await start_stats_server(
-                self, STATS_SERVER_HOST, STATS_SERVER_PORT
-            )
+            if self.stats_server_runner is None:
+                self.stats_server_runner = await start_stats_server(self, STATS_SERVER_HOST, STATS_SERVER_PORT)
         except Exception:
             # The public stats endpoint is supplementary -- a bound-port
             # conflict or a container without public networking must not
@@ -130,6 +151,8 @@ class YapHubBot(commands.Bot):
             )
 
     async def close(self) -> None:
+        if getattr(self, "status_task", None) is not None:
+            self.status_task.cancel()
         if self.stats_server_runner is not None:
             await self.stats_server_runner.cleanup()
         await super().close()
@@ -170,6 +193,8 @@ async def on_app_command_error(
 ) -> None:
     if isinstance(error, app_commands.CommandOnCooldown):
         message = f"You're doing that too fast. Try again in {error.retry_after:.0f} seconds."
+    elif isinstance(getattr(error, "original", error), ApiDeferred):
+        message = "Discord is temporarily unavailable. Please try again after service recovers."
     else:
         logger.error("Unhandled app command error", exc_info=error)
         message = "Something went wrong running that command. Please try again."
@@ -178,6 +203,8 @@ async def on_app_command_error(
             await interaction.followup.send(message, ephemeral=True)
         else:
             await interaction.response.send_message(message, ephemeral=True)
+    except ApiDeferred:
+        return
     except (discord.Forbidden, discord.HTTPException):
         logger.exception("Failed to notify user about a command error")
 
@@ -185,8 +212,12 @@ async def on_app_command_error(
 @bot.event
 async def on_ready() -> None:
     if not bot.started_once:
-        await bot.tree.sync()
         await bot.load_runtime_cache()
+        try:
+            await bot.tree.sync()
+        except ApiDeferred:
+            bot.command_sync_pending = True
+            logger.info("startup command_sync_deferred")
         try:
             await bot.reconcile_active_temp_channels()
         except Exception:
@@ -211,6 +242,7 @@ async def on_ready() -> None:
             stats_refresh_loop.start()
 
         bot.started_once = True
+        bot.runtime_initialized = True
 
     logger.info("Logged in as %s (%s)", bot.user, bot.user.id if bot.user else "unknown")
 
@@ -219,6 +251,12 @@ async def on_ready() -> None:
 async def reconcile_loop() -> None:
     await bot.wait_until_ready()
     try:
+        if bot.command_sync_pending:
+            try:
+                await bot.tree.sync()
+                bot.command_sync_pending = False
+            except ApiDeferred:
+                pass
         await bot.reconcile_active_temp_channels()
     except Exception:
         # discord.ext.tasks stops a loop that raises. Reconciliation is the
@@ -268,6 +306,16 @@ async def on_stats_refresh_loop_error(error: BaseException) -> None:
     logger.exception("Stats refresh loop stopped unexpectedly; restarting", exc_info=error)
     if not stats_refresh_loop.is_running():
         stats_refresh_loop.restart()
+
+
+@bot.event
+async def on_guild_channel_delete(channel):
+    if channel.id in bot.active_temp_channel_ids:
+        row = await bot.storage.get_active_temp_channel(channel.id)
+        if row is not None and int(row["guild_id"]) == channel.guild.id:
+            await bot.storage.delete_active_temp_channel(channel.id)
+            bot.active_temp_channel_ids.discard(channel.id)
+            logger.info("temp_room gateway_deletion_confirmed channel=%s", channel.id)
 
 
 @bot.event

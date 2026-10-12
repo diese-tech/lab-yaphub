@@ -30,6 +30,7 @@ refresh.
 """
 
 import logging
+import json
 from typing import Any
 
 from aiohttp import web
@@ -70,6 +71,21 @@ def build_stats_app(bot) -> web.Application:
     app = web.Application()
     app[BOT_KEY] = bot
     app.router.add_get("/stats.json", _handle_stats)
+    async def health(request):
+        return web.json_response({"alive": True})
+
+    async def status(request):
+        payload = getattr(bot, "status_cache", None)
+        return web.Response(text=payload or '{"state":"starting"}', content_type="application/json")
+
+    async def ready(request):
+        payload = getattr(bot, "status_cache", None)
+        state = json.loads(payload)["state"] if payload else "starting"
+        return web.json_response({"state": state}, status=200 if state in {"available", "partial"} else 503)
+
+    app.router.add_get("/healthz", health)
+    app.router.add_get("/readyz", ready)
+    app.router.add_get("/status.json", status)
     return app
 
 

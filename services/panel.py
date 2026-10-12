@@ -1,6 +1,7 @@
 import logging
 
 import discord
+from services.api_recovery import ApiDeferred
 from discord import ui
 
 from services.ownership import resolve_owned_temp_channel_by_id
@@ -366,6 +367,8 @@ async def send_room_panel(
     try:
         embed = build_panel_embed(owner, locked=locked, hidden=hidden, permitted=permitted)
         return await channel.send(embed=embed, view=RoomControlPanel())
+    except ApiDeferred:
+        return None
     except (discord.Forbidden, discord.HTTPException):
         logger.exception("Failed to post control panel in channel %s", channel.id)
         return None
@@ -409,5 +412,7 @@ async def refresh_panel_message(
             permitted=await permitted_members(bot, channel.guild, channel.id),
         )
         await message.edit(embed=embed)
+    except ApiDeferred:
+        return
     except (discord.NotFound, discord.Forbidden, discord.HTTPException, ValueError):
         logger.exception("Failed to refresh panel message for channel %s", channel.id)

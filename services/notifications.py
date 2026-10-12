@@ -2,6 +2,7 @@ import asyncio
 import logging
 
 import discord
+from services.api_recovery import ApiDeferred
 
 from config import (
     DEFAULT_NOTIFICATION_COOLDOWN_SECONDS,
@@ -48,6 +49,8 @@ async def notify_duplicate_room(
     try:
         await member.send(message)
         return
+    except ApiDeferred:
+        return
     except (discord.Forbidden, discord.HTTPException):
         logger.info("DM failed for duplicate-room notice to user %s", member.id)
 
@@ -65,6 +68,8 @@ async def notify_duplicate_room(
                 fallback_message,
                 delete_after=NOTIFICATION_DELETE_AFTER_SECONDS,
             )
+            return
+        except ApiDeferred:
             return
         except (discord.Forbidden, discord.HTTPException):
             logger.info("Failed to send duplicate-room fallback notice in %s", target.id)
