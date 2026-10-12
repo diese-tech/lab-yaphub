@@ -56,3 +56,71 @@ async def test_concurrent_joins_send_only_one_rejected_request():
     )
     guild.create_voice_channel.assert_awaited_once()
     assert sum(isinstance(result, RoomCreationPaused) for result in results) == 19
+
+
+@pytest.mark.parametrize("scope", ["user", "shared"])
+async def test_confirmed_resource_limit_only_pauses_its_guild(scope):
+    gate = CreateBackoff()
+    headers = {
+        "X-RateLimit-Scope": scope, "X-RateLimit-Bucket": "create-bucket",
+        "Via": "1.1 edge", "Content-Type": "application/json", "Retry-After": "120",
+    }
+    first = SimpleNamespace(id=1, create_voice_channel=AsyncMock(side_effect=rejection(headers=headers)))
+    other = SimpleNamespace(id=2, create_voice_channel=AsyncMock())
+    with pytest.raises(discord.HTTPException):
+        await gate.create(first, name="A")
+    with pytest.raises(RoomCreationPaused):
+        await gate.create(first, name="A")
+    await gate.create(other, name="B")
+    other.create_voice_channel.assert_awaited_once()
+
+
+@pytest.mark.parametrize("overrides", [
+    {"X-RateLimit-Global": "true"}, {"X-RateLimit-Scope": "global"},
+    {"Via": ""}, {"Content-Type": "text/html"},
+    {"X-RateLimit-Bucket": ""}, {"X-RateLimit-Scope": "unknown"},
+])
+async def test_global_or_unconfirmed_limit_pauses_all_guilds(overrides):
+    headers = {
+        "X-RateLimit-Scope": "shared", "X-RateLimit-Bucket": "create-bucket",
+        "Via": "1.1 edge", "Content-Type": "application/json", "Retry-After": "120",
+        **overrides,
+    }
+    gate = CreateBackoff()
+    first = SimpleNamespace(id=1, create_voice_channel=AsyncMock(side_effect=rejection(headers=headers)))
+    other = SimpleNamespace(id=2, create_voice_channel=AsyncMock())
+    with pytest.raises(discord.HTTPException):
+        await gate.create(first, name="A")
+    with pytest.raises(RoomCreationPaused):
+        await gate.create(other, name="B")
+    other.create_voice_channel.assert_not_awaited()
+
+
+async def test_expired_guild_pause_is_removed_and_creation_resumes(monkeypatch):
+    monkeypatch.setattr("services.create_backoff.time.monotonic", lambda: 100)
+    gate = CreateBackoff()
+    headers = {"X-RateLimit-Scope": "shared", "X-RateLimit-Bucket": "bucket",
+               "Via": "edge", "Content-Type": "application/json; charset=utf-8", "Retry-After": "10"}
+    guild = SimpleNamespace(id=1, create_voice_channel=AsyncMock(side_effect=rejection(headers=headers)))
+    with pytest.raises(discord.HTTPException):
+        await gate.create(guild, name="A")
+    monkeypatch.setattr("services.create_backoff.time.monotonic", lambda: 110)
+    guild.create_voice_channel.side_effect = None
+    await gate.create(guild, name="A")
+    assert gate.guild_until == {}
+    assert guild.create_voice_channel.await_count == 2
+
+
+async def test_global_pause_overrides_existing_guild_pause():
+    gate = CreateBackoff()
+    headers = {"X-RateLimit-Scope": "user", "X-RateLimit-Bucket": "bucket",
+               "Via": "edge", "Content-Type": "application/json", "Retry-After": "10"}
+    first = SimpleNamespace(id=1, create_voice_channel=AsyncMock(side_effect=rejection(headers=headers)))
+    other = SimpleNamespace(id=2, create_voice_channel=AsyncMock(side_effect=rejection()))
+    with pytest.raises(discord.HTTPException):
+        await gate.create(first, name="A")
+    with pytest.raises(discord.HTTPException):
+        await gate.create(other, name="B")
+    with pytest.raises(RoomCreationPaused) as caught:
+        await gate.create(first, name="A")
+    assert caught.value.retry_after > 50

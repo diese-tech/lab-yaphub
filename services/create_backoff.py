@@ -26,13 +26,16 @@ class CreateBackoff:
     def __init__(self):
         self.lock = asyncio.Lock()
         self.until = 0.0
+        self.guild_until: dict[int, float] = {}
 
     async def create(self, guild, **kwargs):
         # Only the create request is serialized, not storage, movement or
         # panels. A rejected request closes the gate before another caller
         # (including one in a different guild) can send its create request.
         async with self.lock:
-            remaining = self.until - time.monotonic()
+            now = time.monotonic()
+            self.guild_until = {key: deadline for key, deadline in self.guild_until.items() if deadline > now}
+            remaining = max(self.until, self.guild_until.get(guild.id, 0.0)) - now
             if remaining > 0:
                 raise RoomCreationPaused(remaining)
             try:
@@ -49,15 +52,33 @@ class CreateBackoff:
                 except (TypeError, ValueError):
                     delay = UNKNOWN_RETRY_PAUSE_SECONDS
                     source = "local_safety_pause"
-                self.until = time.monotonic() + delay
+                # This gate only calls POST /guilds/{guild.id}/channels.
+                # A confirmed non-global API bucket is therefore guild
+                # scoped. Missing or contradictory metadata stays global;
+                # edge restrictions must not be guessed to be local.
+                scope = str(headers.get("X-RateLimit-Scope", "")).lower()
+                global_value = str(headers.get("X-RateLimit-Global", "")).lower()
+                content_type = str(headers.get("Content-Type", "")).split(";", 1)[0].strip().lower()
+                is_guild_limit = (
+                    scope in {"user", "shared"}
+                    and global_value in {"", "false"}
+                    and bool(headers.get("Via"))
+                    and bool(headers.get("X-RateLimit-Bucket"))
+                    and content_type == "application/json"
+                )
+                deadline = time.monotonic() + delay
+                if is_guild_limit:
+                    self.guild_until[guild.id] = max(self.guild_until.get(guild.id, 0.0), deadline)
+                else:
+                    self.until = max(self.until, deadline)
                 # Allowlisted metadata only: never tokens, request headers
                 # or the response body. These distinguish API buckets from
                 # edge restrictions without guessing from the error text.
                 logger.warning(
                     "temp_room api_rate_limited guild=%s pause_seconds=%.1f "
-                    "pause_source=%s scope=%s global=%s via=%s cf_ray=%s "
+                    "pause_source=%s pause_scope=%s scope=%s global=%s via=%s cf_ray=%s "
                     "content_type=%s",
-                    guild.id, delay, source,
+                    guild.id, delay, source, "guild" if is_guild_limit else "global",
                     headers.get("X-RateLimit-Scope"),
                     headers.get("X-RateLimit-Global"),
                     headers.get("Via"), headers.get("CF-Ray"),

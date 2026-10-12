@@ -196,8 +196,12 @@ discord.py handles normal Discord bucket and global rate limits. A 429
 that escapes as `HTTPException` can indicate an edge restriction rather
 than an ordinary quota. Do not infer the source from its message alone.
 
-Room creation uses a bot-wide gate around the create request. On an
-escaped 429 it pauses subsequent creates across guilds for the positive,
+Room creation uses a gate around the create request. A confirmed non-global
+Discord API bucket pauses only the affected guild: the response must have
+`user` or `shared` scope, no affirmative or ambiguous global flag, a bucket
+identifier, `Via`, and a JSON content type. The create endpoint is keyed by
+guild. Global limits and unknown/edge responses pause creates across guilds.
+On an escaped 429 it pauses subsequent creates for the positive,
 finite `Retry-After` header, or a 60-second local safety pause if that
 header is unavailable. This fallback is not a Discord quota. Paused joins
 send no create request and write no room ownership record. Users must
@@ -205,7 +209,7 @@ leave and rejoin the lobby after the pause; no automatic retry is queued.
 Existing room movement, panels and cleanup retain their existing behavior.
 
 `temp_room api_rate_limited` logs the pause source plus allowlisted response
-metadata (`scope`, `global`, `via`, `cf_ray`, `content_type`). It does not
+metadata (`pause_scope`, `scope`, `global`, `via`, `cf_ray`, `content_type`). It does not
 log tokens or response bodies. Use these fields to distinguish ordinary
 API buckets from edge failures. If edge failures persist at low request
 volume, investigate Railway outbound IP/network behavior with provider
