@@ -186,7 +186,7 @@ async def reconcile_active_temp_channels(bot) -> None:
     bot.active_temp_channel_ids = tracked_ids | (bot.active_temp_channel_ids - ids_before)
 
 
-async def _reconcile_row(bot, row, channel_id: int) -> bool:
+async def _reconcile_row(bot, row, channel_id: int, *, skip_panel=False) -> bool:
     """Reconcile one tracked room. Returns True if it should stay tracked."""
     guild = bot.get_guild(int(row["guild_id"]))
 
@@ -277,7 +277,7 @@ async def _reconcile_row(bot, row, channel_id: int) -> bool:
 
     await bot.storage.touch_active_temp_channel(channel_id)
 
-    if row["panel_message_id"] is None:
+    if row["panel_message_id"] is None and not skip_panel:
         await _backfill_panel_message(bot, guild, channel, row)
 
     return True

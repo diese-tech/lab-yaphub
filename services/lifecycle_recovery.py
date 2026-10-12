@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 import discord
 
 from config import DEFAULT_TEMP_CHANNEL_PREFIX
-from services.api_recovery import AmbiguousMutation, ApiDeferred
+from services.api_recovery import AmbiguousMutation, ApiDeferred, rest_precondition
 from services.notifications import notify_duplicate_room
 from services.panel import send_room_panel
 from services.permissions import missing_room_permissions
@@ -46,7 +46,9 @@ class LifecycleRecovery:
     async def refresh_counts(self):
         self.bot.pending_join_count = len(await self.store.rows("pending_joins"))
         self.bot.pending_cleanup_count = len(await self.store.rows("pending_cleanup"))
-        self.bot.unresolved_creation_count = sum(i["phase"] == "unresolved" for i in await self.store.rows("creation_intents"))
+        intents = await self.store.rows("creation_intents")
+        self.bot.unresolved_creation_count = sum(i["phase"] == "unresolved" for i in intents)
+        self.bot.blocked_panel_count = sum(i["phase"] == "panel_blocked" for i in intents)
         self.bot.queue_overflow_count = self.overflow
         self.bot.queue_wait_seconds = self.wait_seconds
 
@@ -63,9 +65,15 @@ class LifecycleRecovery:
         intents = await self.store.rows("creation_intents")
         moving = any(i["guild_id"] == str(member.guild.id) and i["user_id"] == str(member.id)
                      and i["channel_id"] == str(getattr(after, "id", None))
-                     and i["phase"] in {"created", "moved"} for i in intents)
+                     and i["phase"] in {"created", "moved", "panel_blocked"} for i in intents)
         if not moving:
             await self.store.cancel(member.guild.id, member.id)
+            for intent in intents:
+                if (intent["guild_id"], intent["user_id"]) == (str(member.guild.id), str(member.id)):
+                    if intent["phase"] in {"prepared", "created", "moved", "panel_blocked"}:
+                        await self.store.phase(intent["id"], "cancelled")
+                        if intent["channel_id"]:
+                            await self.store.cleanup(member.guild.id, intent["channel_id"], member.id)
 
     async def cancel_member_removal(self, member):
         await self.store.cancel(member.guild.id, member.id)
@@ -76,10 +84,11 @@ class LifecycleRecovery:
                     if intent["channel_id"]:
                         await self.store.cleanup(member.guild.id, intent["channel_id"])
 
-    async def scan(self):
+    async def scan(self, enqueue_lobbies=True):
         if not self.bot.is_ready():
             return
-        for profile in await self.bot.storage.list_all_profiles():
+        profiles = await self.bot.storage.list_all_profiles() if enqueue_lobbies else []
+        for profile in profiles:
             guild = self.bot.get_guild(int(profile["guild_id"]))
             if guild is None or getattr(guild, "unavailable", False):
                 continue
@@ -185,7 +194,7 @@ class LifecycleRecovery:
             try:
                 if cleanup and time.monotonic() - self.last_sweep > 30:
                     self.last_sweep = time.monotonic()
-                    await self.scan()
+                    await self.scan(enqueue_lobbies=False)
                 await self.tick(cleanup)
             except asyncio.CancelledError:
                 raise
@@ -245,6 +254,11 @@ class LifecycleRecovery:
             await self.abandon(row, intent)
             logger.error("recovery configuration_invalid reason=permissions")
             return
+        def still_waiting():
+            current_voice = getattr(getattr(member, "voice", None), "channel", None)
+            return (self.bot.is_ready() and not getattr(guild, "unavailable", False)
+                    and guild.get_member(member.id) is member
+                    and getattr(current_voice, "id", None) == lobby.id)
         channel = None
         if intent["channel_id"]:
             try:
@@ -277,6 +291,7 @@ class LifecycleRecovery:
             # Persist transmission intent before entering the client. A crash
             # anywhere afterward cannot silently replay the create.
             await self.store.phase(intent["id"], "sent")
+            guard = rest_precondition.set(still_waiting)
             try:
                 channel = await guild.create_voice_channel(
                     name=build_temp_channel_name(member, profile, prefix), category=category,
@@ -296,6 +311,8 @@ class LifecycleRecovery:
             except BaseException:
                 await asyncio.shield(self.store.phase(intent["id"], "unresolved"))
                 raise
+            finally:
+                rest_precondition.reset(guard)
             try:
                 await self.store.attach(intent, channel.id)
             except BaseException:
@@ -308,15 +325,21 @@ class LifecycleRecovery:
             self.bot.active_temp_channel_ids.add(channel.id)
         # Reload gateway membership immediately before moving. No departed
         # user is pulled back, even if they left while create was in flight.
+        pending_current = await self.store.current(row)
+        if not self.bot.is_ready() or getattr(guild, "unavailable", False):
+            raise ApiDeferred(5)
         current = getattr(getattr(member, "voice", None), "channel", None)
         if getattr(current, "id", None) == channel.id:
             await self.store.phase(intent["id"], "moved")
-        elif getattr(current, "id", None) == lobby.id and await self.store.current(row):
+        elif getattr(current, "id", None) == lobby.id and pending_current:
+            guard = rest_precondition.set(still_waiting)
             try:
                 await member.move_to(channel, reason=f"YapHub intent {intent['id']}")
             except discord.Forbidden:
                 await self.abandon(row, intent)
                 raise
+            finally:
+                rest_precondition.reset(guard)
             await self.store.phase(intent["id"], "moved")
         else:
             await self.abandon(row, intent)
@@ -325,7 +348,13 @@ class LifecycleRecovery:
         if tracked is None:
             raise ApiDeferred(5)
         if tracked["panel_message_id"] is None:
-            panel = await send_room_panel(channel, member)
+            try:
+                panel = await send_room_panel(channel, member, propagate_errors=True)
+            except discord.Forbidden:
+                await self.store.phase(intent["id"], "panel_blocked")
+                await self.store.cancel(guild.id, member.id, row["revision"])
+                logger.error("recovery panel_permission_blocked channel=%s staff_action_required=1", channel.id)
+                return
             if panel is None:
                 raise ApiDeferred(10)
             await self.bot.storage.set_panel_message_id(channel.id, panel.id)
@@ -376,7 +405,9 @@ class LifecycleRecovery:
                 leaver = guild.get_member(int(row["leaver_id"]))
                 if leaver is not None and leaver not in channel.members:
                     await cleanup_temp_channel(self.bot, channel, leaver)
-        remains = await _reconcile_row(self.bot, tracked, int(row["channel_id"]))
+        blocked_panel = await self.store.transaction(lambda c: c.execute(
+            "select 1 from creation_intents where channel_id=? and phase='panel_blocked'", (row["channel_id"],)).fetchone() is not None)
+        remains = await _reconcile_row(self.bot, tracked, int(row["channel_id"]), skip_panel=blocked_panel)
         if not remains:
             self.bot.active_temp_channel_ids.discard(int(row["channel_id"]))
             await self.store.deleted(row["channel_id"])

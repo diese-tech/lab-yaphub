@@ -10,7 +10,7 @@ from aiohttp import web
 from discord.http import HTTPClient, Route
 
 from services.api_recovery import (
-    AmbiguousMutation, ApiDeferred, ApiRecovery, ExplicitRejection, RecoveryHTTPClient, RequestInfo, url_info,
+    AmbiguousMutation, ApiDeferred, ApiRecovery, ExplicitRejection, RecoveryHTTPClient, RequestInfo, rest_precondition, url_info,
 )
 from services.stats_server import build_stats_app
 from storage import Storage
@@ -52,12 +52,12 @@ async def server():
     await runner.cleanup()
 
 
-async def client_for(api):
+async def client_for(api, trace=None):
     original = HTTPClient(asyncio.get_running_loop())
     client = RecoveryHTTPClient(original, api)
     # Use the real client and trace configuration, with only transport
     # destination changed to our local HTTP server.
-    client._HTTPClient__session = aiohttp.ClientSession(trace_configs=[api.trace()])
+    client._HTTPClient__session = aiohttp.ClientSession(trace_configs=[trace or api.trace()])
     client._global_over = asyncio.Event()
     client._global_over.set()
     return client
@@ -244,3 +244,24 @@ async def test_retry_http_date_and_valid_json_timing_are_honored(api):
                       SimpleNamespace(status=429, headers={"Retry-After": "malformed"}),
                       {"retry_after": 7200}, 0.1)
     assert api.retry_at() >= now + 7200
+
+
+@pytest.mark.parametrize("method,path", [("POST", "/guilds/{guild_id}/channels"),
+                                         ("PATCH", "/guilds/{guild_id}/members/{user_id}")])
+async def test_departure_during_connection_setup_blocks_mutation_before_headers(api, server, method, path):
+    url, attempts, _ = server
+    waiting = {"value": True}
+    trace = api.trace()
+    async def departed(session, ctx, params):
+        waiting["value"] = False
+    trace.on_connection_create_end.append(departed)
+    client = await client_for(api, trace)
+    guard = rest_precondition.set(lambda: waiting["value"])
+    try:
+        with pytest.raises(ApiDeferred):
+            await client.request(route(url, method, path, guild_id=1, user_id=7), json={"channel_id": "123"})
+        assert not attempts
+        assert api.metrics()["requests_10m"] == 0
+    finally:
+        rest_precondition.reset(guard)
+        await client.close()

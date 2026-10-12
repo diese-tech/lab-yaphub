@@ -7,7 +7,7 @@ import pytest
 from services.api_recovery import AmbiguousMutation, ApiDeferred, ApiRecovery
 from services.lifecycle_recovery import LifecycleRecovery
 from storage import Storage
-from tests.conftest import FakeDiscord, make_bot, make_permissions
+from tests.conftest import FakeDiscord, forbidden, make_bot, make_permissions
 from tests.test_api_recovery import client_for, route
 from tests.test_api_recovery import server as server
 
@@ -377,8 +377,84 @@ async def test_slow_sal_join_does_not_block_ysl_join_and_cleanup(recovery):
         assert not r.world.created_ids
         release.set()
         await task
+
         assert r.world.created_ids == [200]
         assert not r.queue.busy
     finally:
         release.set()
         await task
+
+
+async def test_gateway_loss_during_create_retains_room_without_moving(recovery):
+    r = recovery
+    async def lose_gateway(**kwargs):
+        room = await r.world._create_voice_channel(**kwargs)
+        r.bot.is_ready = lambda: False
+        return room
+    r.world.guild.create_voice_channel.side_effect = lose_gateway
+    await r.queue.tick()
+    r.member.move_to.assert_not_awaited()
+    assert await r.store.protects(200)
+    assert await r.storage.get_active_temp_channel(200) is not None
+    r.bot.is_ready = lambda: True
+    await ready_rows(r.store)
+    await r.queue.tick()
+    assert r.world.created_ids == [200]
+    assert r.member.voice.channel.id == 200
+
+
+async def test_departure_during_pending_state_read_is_checked_after_await(recovery, monkeypatch):
+    r = recovery
+    original = r.store.current
+    calls = 0
+    async def current(row):
+        nonlocal calls
+        calls += 1
+        result = await original(row)
+        if calls == 2:
+            r.world.move(r.member, None)
+        return result
+    monkeypatch.setattr(r.store, "current", current)
+    await r.queue.tick()
+    assert r.world.created_ids == [200]
+    r.member.move_to.assert_not_awaited()
+    assert not await r.store.protects(200)
+
+
+async def test_periodic_maintenance_does_not_requeue_permanently_failed_joins(recovery):
+    r = recovery
+    r.world.guild.create_voice_channel.side_effect = forbidden()
+    await r.queue.tick()
+    assert not await r.store.rows("pending_joins")
+    for _ in range(2):
+        await r.queue.scan(enqueue_lobbies=False)
+        await r.queue.tick()
+    assert r.world.guild.create_voice_channel.await_count == 1
+
+
+async def test_forbidden_panel_preserves_room_without_automatic_reposts(recovery):
+    r = recovery
+    r.panel.side_effect = forbidden()
+    await r.queue.tick()
+    assert r.member.voice.channel.id == 200
+    assert (await r.store.rows("creation_intents"))[0]["phase"] == "panel_blocked"
+    assert not await r.store.rows("pending_joins")
+    await r.queue.scan(enqueue_lobbies=False)
+    await r.queue.tick(True)
+    assert r.panel.await_count == 1
+    await r.queue.cancel_departure(r.member, None)
+    r.world.move(r.member, None)
+    await r.queue.tick(True)
+    assert r.world.deleted_ids == [200]
+
+
+async def test_departure_cancels_deferred_panel_and_protection_immediately(recovery):
+    r = recovery
+    r.panel.side_effect = ApiDeferred(600)
+    await r.queue.tick()
+    assert await r.store.protects(200)
+    r.world.move(r.member, None)
+    await r.queue.cancel_departure(r.member, None)
+    assert not await r.store.rows("pending_joins")
+    assert not await r.store.protects(200)
+    assert await r.storage.get_active_temp_channel(200) is not None
