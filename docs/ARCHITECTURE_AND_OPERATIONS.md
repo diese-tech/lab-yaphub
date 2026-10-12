@@ -217,3 +217,18 @@ support. Changing region or IP is not an automatic recovery action.
 
 Rollback: revert the room-creation backoff change and deploy the previous
 revision. No schema or environment variable changes are required.
+
+## Discord startup recovery
+
+An escaped HTTP 429 during login keeps the process alive and retries after
+Discord's positive finite `Retry-After` header. Without valid timing, a
+local exponential pause starts at 60 seconds and caps at 15 minutes.
+This cap never shortens a supplied Discord retry interval. Cancellation
+interrupts the wait. Invalid credentials and non-429 errors propagate.
+
+Failed login sessions are closed and their connector reset before the next
+attempt. Setup and gateway connection proceed only after login succeeds.
+`startup login_rate_limited` logs allowlisted response metadata without
+tokens or response bodies; `startup login_recovered` records recovery.
+Waiting is not proof that the bot is serving Discord: verify `Logged in as`
+and live room lifecycle activity before declaring it operational.
