@@ -360,7 +360,7 @@ async def on_voice_state_update(
     if before_channel is not None and before_channel == after_channel:
         return
 
-    if before_channel is not None and before_channel.id in bot.profile_cache:
+    if before_channel is not None:
         await bot.lifecycle_recovery.cancel_departure(member, after_channel)
 
     if before_channel is not None and before_channel.id in bot.active_temp_channel_ids:

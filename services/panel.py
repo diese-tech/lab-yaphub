@@ -363,13 +363,18 @@ async def send_room_panel(
     locked: bool = False,
     hidden: bool = False,
     permitted: tuple[discord.Member, ...] = (),
+    propagate_errors: bool = False,
 ) -> discord.Message | None:
     try:
         embed = build_panel_embed(owner, locked=locked, hidden=hidden, permitted=permitted)
         return await channel.send(embed=embed, view=RoomControlPanel())
     except ApiDeferred:
+        if propagate_errors:
+            raise
         return None
     except (discord.Forbidden, discord.HTTPException):
+        if propagate_errors:
+            raise
         logger.exception("Failed to post control panel in channel %s", channel.id)
         return None
 

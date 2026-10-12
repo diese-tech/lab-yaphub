@@ -17,6 +17,7 @@ from discord.http import HTTPClient, Route
 
 logger = logging.getLogger("yaphub")
 request_context = contextvars.ContextVar("discord_request", default=None)
+rest_precondition = contextvars.ContextVar("discord_mutation_precondition", default=None)
 
 
 class ApiDeferred(Exception):
@@ -225,6 +226,11 @@ class ApiRecovery:
             # In the pinned aiohttp writer this supported hook runs before
             # header serialization/writing, including connection retries.
             await self.admit(ctx.info)
+            predicate = rest_precondition.get()
+            if predicate and (ctx.info.creates_channel or (ctx.info.method == "PATCH" and ctx.info.path == "/guilds/{guild_id}/members/{user_id}")):
+                if not predicate():
+                    self.deferred += 1
+                    raise ApiDeferred(1)
             if ctx.info.creates_channel and ctx.send_count:
                 raise AmbiguousMutation("Channel create transmission cannot be replayed")
             ctx.send_count += 1
@@ -311,12 +317,13 @@ def status_snapshot(bot):
     connected = bot.is_ready()
     blocked = api.blocked() if api else False
     state = "starting" if not initialized else "disconnected" if not connected else "blocked" if blocked else (
-        "partial" if api and api.states else "available"
+        "partial" if (api and api.states) or getattr(bot, "blocked_panel_count", 0) else "available"
     )
     return {"state": state, "observed_at": time.time(), "retry_at": api.retry_at() if api else None,
             "metrics": api.metrics() if api else {}, "pending_joins": getattr(bot, "pending_join_count", 0),
             "pending_cleanup": getattr(bot, "pending_cleanup_count", 0),
             "unresolved_creations": getattr(bot, "unresolved_creation_count", 0),
+            "blocked_panels": getattr(bot, "blocked_panel_count", 0),
             "queue_overflow": getattr(bot, "queue_overflow_count", 0),
             "last_queue_wait_seconds": getattr(bot, "queue_wait_seconds", 0),
             "last_room_success": getattr(bot, "last_room_success", None)}
