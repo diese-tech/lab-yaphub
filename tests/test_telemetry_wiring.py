@@ -159,6 +159,23 @@ async def test_a_refused_channel_creation_records_room_create_failed_and_still_r
     assert summary["rooms_created_total"] == 0
 
 
+async def test_rate_limited_creation_pauses_next_join_without_tracking(env):
+    from types import SimpleNamespace
+
+    response = SimpleNamespace(status=429, reason="Too Many Requests", headers={"Retry-After": "120"})
+    env["world"].guild.create_voice_channel = AsyncMock(
+        side_effect=discord.HTTPException(response, "Temporarily blocked")
+    )
+    with pytest.raises(discord.HTTPException):
+        await _create(env, env["world"].make_member(7))
+    await _create(env, env["world"].make_member(8))
+    env["world"].guild.create_voice_channel.assert_awaited_once()
+    assert await env["storage"].list_active_temp_channels() == []
+    summary = await _summary(env)
+    assert summary["room_create_failed_total"] == 2
+    assert summary["rooms_created_total"] == 0
+
+
 async def test_a_missing_permissions_refusal_records_room_create_failed(env):
     from tests.conftest import make_permissions
 

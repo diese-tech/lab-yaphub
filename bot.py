@@ -17,6 +17,7 @@ from config import (
     STATS_SERVER_PORT,
 )
 from services.panel import RoomControlPanel
+from services.create_backoff import CreateBackoff
 from services.public_stats import refresh_public_stats_snapshot
 from services.stats_server import start_stats_server
 from services.telemetry import backfill_known_guilds
@@ -70,6 +71,7 @@ class YapHubBot(commands.Bot):
         # create_temp_room once the last holder releases, so the dict does
         # not grow unboundedly over the process lifetime.
         self.user_creation_locks: dict[tuple[int, int], list] = {}
+        self.room_create_backoff = CreateBackoff()
         # Reconciliation runs from two places (startup and the periodic
         # loop) and rewrites active_temp_channel_ids wholesale. Overlapping
         # passes would race each other into deleting the same room twice and
