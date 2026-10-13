@@ -458,3 +458,17 @@ async def test_departure_cancels_deferred_panel_and_protection_immediately(recov
     assert not await r.store.rows("pending_joins")
     assert not await r.store.protects(200)
     assert await r.storage.get_active_temp_channel(200) is not None
+
+
+async def test_confirmed_cleanup_finishes_without_fetching_deleted_channel(recovery):
+    r = recovery
+    await r.queue.tick()
+    r.world.move(r.member, None)
+    await r.store.cleanup(1, 200, r.member.id)
+    r.bot.fetch_channel.side_effect = AssertionError("Must not fetch a confirmed deleted room")
+    await r.queue.tick(True)
+    assert r.world.deleted_ids == [200]
+    r.bot.fetch_channel.assert_not_awaited()
+    assert await r.storage.get_active_temp_channel(200) is None
+    assert not await r.store.rows("pending_cleanup")
+    assert not await r.store.protects(200)
