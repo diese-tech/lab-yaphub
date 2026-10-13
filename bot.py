@@ -67,6 +67,10 @@ class YapHubBot(commands.Bot):
         self.api_recovery = ApiRecovery(self.storage)
         self.http = RecoveryHTTPClient(self.http, self.api_recovery)
         self._connection.http = self.http
+        # CommandTree captures the original HTTP client in Bot.__init__.
+        # Bind it to the same guarded, logged-in session as gateway state.
+        # This private integration is exercised against pinned discord.py.
+        self.tree._http = self.http
         self.runtime_initialized = False
         self.status_cache = None
         self.status_task = None
@@ -224,6 +228,9 @@ async def on_ready() -> None:
         except ApiDeferred:
             bot.command_sync_pending = True
             logger.info("startup command_sync_deferred")
+        except discord.HTTPException:
+            bot.command_sync_pending = True
+            logger.exception("Startup command sync failed; room workers will start and sync will retry")
         try:
             await bot.reconcile_active_temp_channels()
         except Exception:
