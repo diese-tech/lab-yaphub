@@ -405,6 +405,14 @@ class LifecycleRecovery:
                 leaver = guild.get_member(int(row["leaver_id"]))
                 if leaver is not None and leaver not in channel.members:
                     await cleanup_temp_channel(self.bot, channel, leaver)
+        # Successful cleanup or a verified gateway deletion may have removed
+        # ownership while the REST call was in flight. Use that durable result
+        # instead of reconciling the stale row and fetching a deleted channel.
+        tracked = await self.bot.storage.get_active_temp_channel(int(row["channel_id"]))
+        if tracked is None:
+            await self.store.deleted(row["channel_id"])
+            await self.store.cleanup_result(row)
+            return
         blocked_panel = await self.store.transaction(lambda c: c.execute(
             "select 1 from creation_intents where channel_id=? and phase='panel_blocked'", (row["channel_id"],)).fetchone() is not None)
         remains = await _reconcile_row(self.bot, tracked, int(row["channel_id"]), skip_panel=blocked_panel)
