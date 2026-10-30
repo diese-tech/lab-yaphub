@@ -2,6 +2,7 @@ import logging
 
 import discord
 from services.api_recovery import ApiDeferred
+from services.diagnostics import log_interaction_error
 from discord import ui
 
 from services.ownership import resolve_owned_temp_channel_by_id
@@ -234,6 +235,8 @@ class RoomControlPanel(ui.View):
         likely a Forbidden from set_permissions when YapHub is missing Manage
         Roles) would otherwise leave the panel spinning with no explanation.
         """
+        log_interaction_error("panel_action_failed", interaction, error,
+                              operation=getattr(item, "custom_id", None))
         logger.error(
             "Room control panel action %s failed", getattr(item, "custom_id", item), exc_info=error
         )

@@ -261,3 +261,48 @@ not read durable cooldowns must not be restarted before those deadlines expire.
 A deployment marked SUCCESS is not acceptance: require gateway readiness and a
 complete create/move/panel/leave/cleanup flow in SAL and YSL with coordinated test
 users, followed by 24 hours of observation. See issue #31 and ROADMAP.md.
+## Error snapshots in Railway
+
+Search production logs for `diagnostic_snapshot`. Each entry is one JSON record
+with a schema version and unique `error_id`; Railway's log timestamp records when
+the failure was observed. These are private operational logs, separate from public
+stats and aggregate analytics.
+
+Snapshots cover room-creation preflight permission failures, rejected room creates
+and moves, blocked panel publication, lifecycle worker operation failures, managed
+room deletion failures, profile/reset lobby deletion failures, and unhandled slash
+command or room-panel actions. Other existing log messages do not automatically
+receive a snapshot.
+
+The record includes the guild ID and cached guild name, bot ID, relevant room,
+lobby and category IDs, operation, and (where available) profile/intent IDs and
+lifecycle phase. `permissions` contains the bot's effective grants at guild,
+lobby, category and room scope. Compare these scopes to see whether a permission
+is absent server-wide or denied on a particular channel/category. It does not
+identify which individual overwrite caused the effective result.
+
+`missing_permissions` preserves the existing preflight's missing-permission list;
+it is not an exhaustive permissions audit. `http_status`, `discord_code` and
+`exception_type` describe rejected Discord calls without copying response bodies.
+A 403/50001 means Missing Access; 403/50013 means Missing Permissions. Cached
+permissions can differ from Discord's state at request time. Null values mean
+unknown/not applicable, never proof of a grant or denial.
+
+Snapshots use cached objects only: no new Discord requests, database writes or
+background jobs. They exclude bot/interaction tokens, command arguments, message
+content and exception messages. Guild names are bounded and JSON-escaped, and
+permission fields use an allowlist. Existing exception traceback logs remain
+alongside snapshots; redact operational IDs and any sensitive text before sharing
+logs publicly. If collection fails, `diagnostic_snapshot collection_failed` is
+logged and the original error handling continues.
+
+To investigate: search by `guild_id`, then inspect the event's operation, missing
+permissions and effective scope grants. Correlate nearby request and lifecycle
+logs using channel/intent IDs and timestamp. A later success in another guild
+does not establish recovery for the failing guild. No snapshot can reconstruct
+the server behind older context-free errors.
+
+Validation uses mocked Discord permission/HTTP failures and the existing lifecycle
+suite. Deploying the code is required before new production errors include these
+fields. Rollback is a code revert/redeploy; there is no data migration or stored
+diagnostic state to undo.

@@ -8,6 +8,7 @@ import discord
 from config import DEFAULT_TEMP_CHANNEL_PREFIX, RECONCILE_MIN_ROOM_AGE_SECONDS
 from services.create_backoff import CreateBackoff, RoomCreationPaused
 from services.api_recovery import ApiDeferred
+from services.diagnostics import log_error_snapshot
 from services.notifications import notify_duplicate_room
 from services.ownership import active_channel_ids
 from services.panel import send_room_panel
@@ -55,6 +56,8 @@ async def delete_managed_channel(channel: discord.VoiceChannel, reason: str) -> 
         )
         return True
     except (discord.Forbidden, discord.HTTPException) as error:
+        log_error_snapshot("room_delete_failed", operation="delete_managed_channel",
+                           guild=channel.guild, channel=channel, error=error)
         logger.exception(
             "temp_room delete_failed guild=%s channel=%s status=%s reason=%s",
             channel.guild.id,

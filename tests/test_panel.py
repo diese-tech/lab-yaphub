@@ -198,7 +198,7 @@ async def test_panel_on_error_reports_to_the_user_after_a_defer(guild):
     assert kwargs == {"ephemeral": True}
 
 
-async def test_panel_on_error_reports_to_the_user_before_a_defer(guild):
+async def test_panel_on_error_reports_to_the_user_before_a_defer(guild, caplog):
     view = RoomControlPanel()
     interaction = make_interaction(make_member(1, guild), guild)
 
@@ -206,3 +206,8 @@ async def test_panel_on_error_reports_to_the_user_before_a_defer(guild):
 
     interaction.response.send_message.assert_awaited_once()
     interaction.followup.send.assert_not_called()
+    from tests.test_diagnostics import snapshots
+    snapshot, = snapshots(caplog)
+    assert snapshot["event"] == "panel_action_failed"
+    assert snapshot["guild_id"] == str(guild.id)
+    assert snapshot["operation"] == "yaphub_panel:hide"

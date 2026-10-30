@@ -255,7 +255,7 @@ async def test_reset_only_deletes_lobbies_it_has_records_for(env):
     assert env["bot"].profile_cache == {}
 
 
-async def test_reset_survives_a_lobby_it_cannot_delete(env):
+async def test_reset_survives_a_lobby_it_cannot_delete(env, caplog):
     lobby = make_voice_channel(500, env["guild"], name="Join to Yap")
     lobby.delete = AsyncMock(side_effect=forbidden())
     await env["storage"].create_profile(
@@ -278,3 +278,10 @@ async def test_reset_survives_a_lobby_it_cannot_delete(env):
     # The configuration is still cleared; the undeletable lobby is reported.
     assert await env["storage"].list_profiles(1) == []
     confirm_interaction.followup.send.assert_awaited_once()
+    from tests.test_diagnostics import snapshots
+    snapshot, = snapshots(caplog)
+    assert snapshot["event"] == "lobby_delete_failed"
+    assert snapshot["guild_id"] == "1"
+    assert snapshot["channel_id"] == "500"
+    assert snapshot["operation"] == "reset"
+    assert snapshot["http_status"] == 403

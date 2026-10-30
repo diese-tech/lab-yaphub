@@ -21,6 +21,7 @@ from services.create_backoff import CreateBackoff
 from services.login_backoff import login_with_backoff
 from services.api_recovery import ApiDeferred, ApiRecovery, RecoveryHTTPClient, status_json
 from services.lifecycle_recovery import LifecycleRecovery
+from services.diagnostics import log_interaction_error
 from services.public_stats import refresh_public_stats_snapshot
 from services.stats_server import start_stats_server
 from services.telemetry import backfill_known_guilds
@@ -206,6 +207,7 @@ async def on_app_command_error(
     elif isinstance(getattr(error, "original", error), ApiDeferred):
         message = "Discord is temporarily unavailable. Please try again after service recovers."
     else:
+        log_interaction_error("app_command_failed", interaction, error)
         logger.error("Unhandled app command error", exc_info=error)
         message = "Something went wrong running that command. Please try again."
     try:

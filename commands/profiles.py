@@ -7,6 +7,7 @@ from discord import app_commands
 from config import JOIN_TO_CREATE_NAME
 from services.confirm import ConfirmView
 from services.permissions import require_manage_channels
+from services.diagnostics import log_error_snapshot
 
 if TYPE_CHECKING:
     from bot import YapHubBot
@@ -207,7 +208,9 @@ class ProfileGroup(app_commands.Group):
             if isinstance(join_channel, discord.VoiceChannel):
                 try:
                     await join_channel.delete(reason=f"YapHub profile delete for {name}")
-                except (discord.Forbidden, discord.HTTPException):
+                except (discord.Forbidden, discord.HTTPException) as error:
+                    log_error_snapshot("lobby_delete_failed", operation="profile_delete",
+                                       guild=guild, channel=join_channel, profile_id=profile["id"], error=error)
                     logger.exception("Failed to delete lobby channel %s", join_channel_id)
 
             await self.bot.storage.delete_profile(profile["id"])
