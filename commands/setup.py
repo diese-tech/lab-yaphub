@@ -23,6 +23,7 @@ from commands.recovery import RecoveryGroup
 from config import JOIN_TO_CREATE_NAME
 from services.confirm import ConfirmView
 from services.permissions import require_manage_channels
+from services.diagnostics import log_error_snapshot
 
 if TYPE_CHECKING:
     from bot import YapHubBot
@@ -257,7 +258,9 @@ class YapGroup(app_commands.Group):
                     try:
                         await join_channel.delete(reason="YapHub reset")
                         deleted_channels += 1
-                    except (discord.Forbidden, discord.HTTPException):
+                    except (discord.Forbidden, discord.HTTPException) as error:
+                        log_error_snapshot("lobby_delete_failed", operation="reset",
+                                           guild=guild, channel=join_channel, profile_id=profile["id"], error=error)
                         logger.exception(
                             "Failed to delete lobby channel %s during reset", join_channel_id
                         )

@@ -41,6 +41,39 @@ async def ready_rows(store):
     await store.transaction(lambda c: c.execute("update pending_joins set due=0"))
 
 
+async def test_create_rejection_snapshot_identifies_intent_and_preserves_cancellation(recovery, caplog):
+    from tests.test_diagnostics import snapshots
+    r = recovery
+    r.world.guild.create_voice_channel.side_effect = forbidden()
+    await r.queue.tick()
+    intent, = await r.store.rows("creation_intents")
+    snapshot = next(s for s in snapshots(caplog) if s["event"] == "room_create_failed")
+    assert snapshot["guild_id"] == "1"
+    assert snapshot["lobby_id"] == "100"
+    assert snapshot["intent_id"] == intent["id"]
+    assert snapshot["http_status"] == 403
+    assert intent["phase"] == "cancelled"
+    assert not await r.store.rows("pending_joins")
+    assert not r.world.created_ids
+
+
+async def test_cleanup_failure_snapshot_keeps_channel_id_and_pending_work(recovery, caplog):
+    from tests.test_diagnostics import snapshots
+    r = recovery
+    await r.queue.tick()
+    room = r.member.voice.channel
+    r.world.move(r.member, None)
+    r.world.delete_error = forbidden()
+    await r.store.cleanup(1, room.id, r.member.id)
+    await r.queue.tick(True)
+    snapshot = next(s for s in snapshots(caplog) if s["event"] == "room_delete_failed")
+    assert snapshot["guild_id"] == "1"
+    assert snapshot["channel_id"] == str(room.id)
+    assert snapshot["http_status"] == 403
+    assert await r.storage.get_active_temp_channel(room.id) is not None
+    assert await r.store.rows("pending_cleanup")
+
+
 async def test_waiting_join_recovers_once_and_counts_completion_once(recovery):
     r = recovery
     r.world.guild.create_voice_channel.side_effect = ApiDeferred(600)
@@ -214,12 +247,21 @@ async def test_scheduler_rotates_guilds_and_claims_one_operation_each(recovery):
     assert q.choose(rows)["guild_id"] != second["guild_id"]
 
 
-async def test_permissions_changed_during_pause_prevent_create(recovery):
+async def test_permissions_changed_during_pause_prevent_create(recovery, caplog):
     r = recovery
     r.world.guild.me.guild_permissions = make_permissions(manage_channels=False)
     await r.queue.tick()
     assert not r.world.created_ids
     assert not await r.store.rows("pending_joins")
+    from tests.test_diagnostics import snapshots
+    snapshot, = snapshots(caplog)
+    assert snapshot["event"] == "configuration_invalid"
+    assert snapshot["guild_id"] == "1"
+    assert snapshot["lobby_id"] == "100"
+    assert snapshot["missing_permissions"] == ["Manage Channels"]
+    assert snapshot["permissions"]["guild"]["manage_channels"] is False
+    assert snapshot["phase"] == "prepared"
+    assert snapshot["intent_id"] == (await r.store.rows("creation_intents"))[0]["id"]
 
 
 async def test_manual_deletion_during_deferred_move_allows_one_replacement(recovery):

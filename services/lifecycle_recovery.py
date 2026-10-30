@@ -10,6 +10,7 @@ import discord
 
 from config import DEFAULT_TEMP_CHANNEL_PREFIX
 from services.api_recovery import AmbiguousMutation, ApiDeferred, rest_precondition
+from services.diagnostics import log_error_snapshot
 from services.notifications import notify_duplicate_room
 from services.panel import send_room_panel
 from services.permissions import missing_room_permissions
@@ -175,10 +176,12 @@ class LifecycleRecovery:
                 await self.store.cleanup_result(row, error.retry_after)
             else:
                 await self.store.defer(row, error.retry_after)
-        except AmbiguousMutation:
+        except AmbiguousMutation as error:
+            self.log_work_error(row, cleanup, error)
             logger.exception("recovery creation_unresolved staff_verification_required=1")
             await self.store.defer(row, 60)
-        except Exception:
+        except Exception as error:
+            self.log_work_error(row, cleanup, error)
             logger.exception("recovery lifecycle_retry_pending cleanup=%s", cleanup)
             if cleanup:
                 await self.store.cleanup_result(row, 60)
@@ -188,6 +191,23 @@ class LifecycleRecovery:
             self.busy.discard(row["guild_id"])
             await self.refresh_counts()
         return True
+
+    def log_work_error(self, row, cleanup, error):
+        guild = self.bot.get_guild(int(row["guild_id"]))
+        channel = row.get("channel_id")
+        lobby = row.get("lobby_id")
+        if guild is not None:
+            if channel:
+                channel = guild.get_channel(int(channel)) or channel
+            if lobby:
+                lobby = guild.get_channel(int(lobby)) or lobby
+        log_error_snapshot(
+            "creation_unresolved" if isinstance(error, AmbiguousMutation) else "lifecycle_retry_pending",
+            operation="cleanup" if cleanup else "join",
+            guild=guild, guild_id=row["guild_id"],
+            channel=channel, lobby=lobby,
+            profile_id=row.get("profile_id"), error=error, bot=self.bot,
+        )
 
     async def worker(self, cleanup):
         while True:
@@ -250,9 +270,16 @@ class LifecycleRecovery:
         if category_id and not isinstance(category, discord.CategoryChannel):
             await self.abandon(row, intent)
             return
-        if missing_room_permissions(guild, lobby, category):
+        missing = missing_room_permissions(guild, lobby, category)
+        if missing:
+            log_error_snapshot(
+                "configuration_invalid", operation="create_room_preflight", guild=guild,
+                lobby=lobby, category=category, profile_id=row["profile_id"],
+                intent_id=intent["id"], phase=intent["phase"], missing=missing, bot=self.bot,
+            )
             await self.abandon(row, intent)
-            logger.error("recovery configuration_invalid reason=permissions")
+            logger.error("recovery configuration_invalid reason=permissions guild=%s lobby=%s missing=%s",
+                         guild.id, lobby.id, ",".join(missing))
             return
         def still_waiting():
             current_voice = getattr(getattr(member, "voice", None), "channel", None)
@@ -302,6 +329,11 @@ class LifecycleRecovery:
                 await self.store.phase(intent["id"], "prepared")
                 raise
             except discord.HTTPException as error:
+                log_error_snapshot(
+                    "room_create_failed", operation="create_voice_channel", guild=guild,
+                    lobby=lobby, category=category, profile_id=row["profile_id"],
+                    intent_id=intent["id"], phase="sent", error=error, bot=self.bot,
+                )
                 if error.status >= 500:
                     await self.store.phase(intent["id"], "unresolved")
                     raise AmbiguousMutation("Create response may follow a successful mutation") from error
@@ -335,7 +367,12 @@ class LifecycleRecovery:
             guard = rest_precondition.set(still_waiting)
             try:
                 await member.move_to(channel, reason=f"YapHub intent {intent['id']}")
-            except discord.Forbidden:
+            except discord.Forbidden as error:
+                log_error_snapshot(
+                    "room_move_failed", operation="move_member", guild=guild,
+                    lobby=lobby, channel=channel, category=category, profile_id=row["profile_id"],
+                    intent_id=intent["id"], phase="created", error=error, bot=self.bot,
+                )
                 await self.abandon(row, intent)
                 raise
             finally:
@@ -350,7 +387,12 @@ class LifecycleRecovery:
         if tracked["panel_message_id"] is None:
             try:
                 panel = await send_room_panel(channel, member, propagate_errors=True)
-            except discord.Forbidden:
+            except discord.Forbidden as error:
+                log_error_snapshot(
+                    "panel_permission_blocked", operation="send_room_panel", guild=guild,
+                    lobby=lobby, channel=channel, category=category, profile_id=row["profile_id"],
+                    intent_id=intent["id"], phase="panel_blocked", error=error, bot=self.bot,
+                )
                 await self.store.phase(intent["id"], "panel_blocked")
                 await self.store.cancel(guild.id, member.id, row["revision"])
                 logger.error("recovery panel_permission_blocked channel=%s staff_action_required=1", channel.id)
